@@ -12,6 +12,7 @@ scripts/ps5/title/
   build_native_tool.sh  build ps5-native-tool, the module converter
   fetch_deps.sh         fetch and verify every pinned dependency
   deploy.sh             publish the folder to a console over FTP
+  log.sh                read the application log and the kernel log
   runtime_shims.c       startup side shims (log file, umask, terminal stubs)
   libc_shims.c          the libc entry points a title does not export
   locale_shims.c        the locale and rune entry points (vendored, see below)
@@ -123,8 +124,16 @@ and starting it is a normal application launch.
 
 The application's own output has no reader, so `runtime_shims.c` redirects stdout
 and stderr into `/data/wiliwili/wiliwili-title.log` before `main()` runs. That
-file and the kernel log (the loader prints its own errors, for example
-`Need_sceKernelSys`) are the two places to look:
+file prints the reason from inside the application, the kernel log carries what
+the loader says before it (for example `Need_sceKernelSys`), and
+`scripts/ps5/title/log.sh` reads both:
+
+```bash
+scripts/ps5/title/log.sh -h <console>          # application log, then the kernel log
+scripts/ps5/title/log.sh -h <console> -o run.log
+```
+
+The two sources by hand, when the helper is not at hand:
 
 ```bash
 curl --silent ftp://<console>:2121/data/wiliwili/wiliwili-title.log   # application log

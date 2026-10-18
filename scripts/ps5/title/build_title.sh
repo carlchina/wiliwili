@@ -153,8 +153,9 @@ group="$work_dir/libps5opengl-group.a"
 # The CMake link line describes the payload: everything from the sysroot is
 # dynamic there. A title replaces the two libraries the console cannot provide
 # (OpenGL and SDL2) with their static builds and imports the platform modules
-# from the SDK stubs instead of named libraries.
-echo "==> [title] Rewriting $link_txt"
+# from the SDK stubs instead of named libraries. The file is only read, CMake
+# keeps owning it.
+echo "==> [title] Reading the CMake link line of $link_txt"
 objects=()
 archives=()
 read -r -a tokens < "$link_txt"
