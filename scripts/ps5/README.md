@@ -12,6 +12,15 @@ The cross compilation environment comes from
 prospero toolchain wrappers, the SDK sysroot, and prebuilt SDL2, FFmpeg, Mesa (OpenGL via zink),
 libass, OpenSSL, curl and friends.
 
+### Native title
+
+`scripts/ps5/title/` builds the same application as a **native title** instead of a payload: a
+folder below `/data/homebrew/<TITLE_ID>/` that holds a signed `eboot.bin` and is shown on the home
+screen by a folder-title loader such as ShadowMountPlus. Everything is linked into that one image,
+the OpenGL implementation comes from
+[ps5-opengl](https://github.com/blackbearreloaded/ps5-opengl), and no payload has to run on the
+console. See [title/README.md](title/README.md).
+
 ### Requirements
 
 - LLVM 18 (the toolchain wrappers call the mode-matched host `clang`/`lld`)
