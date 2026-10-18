@@ -5,11 +5,9 @@
 # The tool is built from the ps5-native-app-boilerplate checkout (PS5_BOILERPLATE)
 # with two local notes:
 #
-#   * the process parameters it writes carry the size of the heap the loader
-#     reserves for the application. The boilerplate leaves the field at
-#     "as much as possible" (UINT64_MAX); the reference native applications set
-#     it to 256 MiB and are the ones known to start on a console, so the same
-#     value is patched in here. PS5_TITLE_HEAP_SIZE overrides it.
+#   * the process parameters carry the loader heap the boilerplate validates on
+#     hardware ("as much as possible", UINT64_MAX). PS5_TITLE_HEAP_SIZE patches
+#     a fixed size in instead, for experiments.
 #   * zlib is taken from the host instead of the boilerplate's pinned private
 #     copy: it only computes container checksums, and the module's own geometry
 #     does not depend on the zlib version.
@@ -18,7 +16,7 @@
 #   PS5_BOILERPLATE     ps5-native-app-boilerplate checkout
 # Optional:
 #   PS5_NATIVE_TOOL     output path (default <checkout>/build-host/ps5-native-tool)
-#   PS5_TITLE_HEAP_SIZE loader heap in bytes (default 0x10000000, 256 MiB)
+#   PS5_TITLE_HEAP_SIZE loader heap in bytes (unset: the boilerplate's value)
 #   PS5_ZLIB_INCLUDE    include directory of a private zlib
 #   PS5_ZLIB_LIB        static zlib archive to link instead of the host -lz
 #   CXX                 host C++ compiler (default: clang++-18, then clang++/c++)
@@ -27,7 +25,7 @@ set -euo pipefail
 
 : "${PS5_BOILERPLATE:?set PS5_BOILERPLATE to a ps5-native-app-boilerplate checkout}"
 
-heap_size=${PS5_TITLE_HEAP_SIZE:-0x10000000ULL}
+heap_size=${PS5_TITLE_HEAP_SIZE:-}
 tool=${PS5_NATIVE_TOOL:-$PS5_BOILERPLATE/build-host/ps5-native-tool}
 native=$PS5_BOILERPLATE/tooling/native
 writer=$native/sce_module_writer.cpp
@@ -50,9 +48,17 @@ fi
     exit 2
 }
 
-# The field is written as a literal in the parameter block builder.
+# The field is written as a literal in the parameter block builder. Unset, the
+# checkout is built exactly as it is; a value patches it in, and a checkout that
+# already carries a patched value is only accepted when it matches.
 heap_default='write_u64(result.data, result.heap_size, std::numeric_limits<std::uint64_t>::max());'
-if [[ $(grep -Fc "$heap_default" "$writer") == 1 ]]; then
+if [[ -z $heap_size ]]; then
+    if [[ $(grep -Fc "$heap_default" "$writer") == 1 ]]; then
+        echo "==> [title] ps5-native-tool keeps the boilerplate loader heap (UINT64_MAX)"
+    else
+        echo "note: '$writer' carries a modified loader heap and PS5_TITLE_HEAP_SIZE is unset" >&2
+    fi
+elif [[ $(grep -Fc "$heap_default" "$writer") == 1 ]]; then
     echo "==> [title] Setting the loader heap of ps5-native-tool to $heap_size"
     sed -i.bak "s|$heap_default|write_u64(result.data, result.heap_size, $heap_size);|" "$writer"
     rm -f "$writer.bak"
@@ -82,6 +88,10 @@ echo "==> [title] Building $tool with $CXX"
     "$native/elf_object.cpp" "$native/sce_module_writer.cpp" \
     ${zlib_link[@]+"${zlib_link[@]}"} -o "$tool"
 
-"$tool" --help > /dev/null
+"$tool" --help > /dev/null 2>&1 || true
+[[ $("$tool" --help 2>&1 || true) == *ps5-native-tool* ]] || {
+    echo "the freshly built tool does not answer --help" >&2
+    exit 2
+}
 printf 'ps5-native-tool: %s\n' "$tool"
 sha256sum "$tool" || shasum -a 256 "$tool"

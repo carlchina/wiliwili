@@ -30,7 +30,10 @@ prefix=${1:-${PS5_DEPS_PREFIX:-${HOME}/.local/opt}}
 opengl_version=${PS5_OPENGGL_VERSION:-v1.0.2}
 opengl_commit=a519561626933257213d64a4a8bd5e02b55dceb2
 opengl_sdk_sha256=30d8e51dd062739b629346102be5932728ba714bc50b1bdcdf08306c8843d9a4
-boilerplate_commit=470695e0c557f99ff2df0e36e4df713c5e636526
+# The converter must carry the RELRO anchor fix: earlier revisions built an
+# image whose RELRO segment is incongruent with its file offset, and the loader
+# refuses such an image before the application starts (CE-107750-0).
+boilerplate_commit=44ae1dab529654eac795d2a7c4f5a0425102b8d7
 sdl_commit=8c56053f13ca13a0c050de613706ff69eb615836
 
 mkdir -p "${prefix}"
@@ -123,7 +126,7 @@ fi
 
 # the native application toolchain: the module converter, the startup objects
 # and the runtime module that a folder title is loaded with
-fetch_repo https://github.com/drakmor/ps5-native-app-boilerplate.git \
+fetch_repo https://github.com/blackbearreloaded/ps5-native-app-boilerplate.git \
     "${boilerplate_commit}" "${prefix}/ps5-native-app-boilerplate"
 # a payload has no dynamic loader to run it otherwise
 chmod +x "${prefix}/ps5-native-app-boilerplate/tooling/prospero-clang18"

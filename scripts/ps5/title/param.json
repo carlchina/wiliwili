@@ -2,16 +2,11 @@
   "ageLevel": {
     "default": 0
   },
-  "amm": {
-    "multimapVaRangeInGib": 512,
-    "pagetableMemorySizeInMib": 256,
-    "vaRangeInGib": 512
-  },
   "applicationCategoryType": 0,
   "applicationDrmType": "free",
-  "attribute": 0,
+  "attribute": 1644167168,
   "attribute2": 0,
-  "attribute3": 0,
+  "attribute3": 1048576,
   "conceptId": "99099",
   "contentBadgeType": 1,
   "contentId": "UP9000-PPSA99099_00-WILIWILI00000001",
@@ -23,10 +18,6 @@
         "intentType": "launchActivity"
       }
     ]
-  },
-  "kernel": {
-    "cpuPageTableSize": 268435456,
-    "gpuPageTableSize": 268435456
   },
   "localizedParameters": {
     "defaultLanguage": "en-US",

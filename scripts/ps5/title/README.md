@@ -74,6 +74,12 @@ cmake --build cmake-build-ps5-title --target wiliwili.title -j"$(sysctl -n hw.nc
 scripts/ps5/title/deploy.sh -h <console>
 ```
 
+The pinned converter matters: revisions before `44ae1da` anchored the RELRO
+mapping of a large image at the wrong file offset. The build succeeds, but the
+loader refuses the image before the application starts (`CE-107750-0`); the
+current converter also fails the build when a mapped segment breaks the
+console's 16 KiB placement rule.
+
 `PS5_NATIVE_TITLE=ON` changes what CMake produces in two ways: the resources
 path becomes `/app0/resources/`, and the build grows a `wiliwili.title` target
 that runs `build_title.sh` on the objects CMake compiled. The objects themselves
@@ -95,7 +101,7 @@ own layout:
 | `PS5_TITLE_BUILD_DIR` | `cmake-build-ps5-title` | CMake build directory to link |
 | `PS5_TITLE_OUT_DIR` | `dist/<title id>` | where the folder is assembled |
 | `PS5_TITLE_ID` | `PPSA99099` | title id of the folder |
-| `PS5_TITLE_HEAP_SIZE` | `0x10000000` | heap the loader reserves (`build_native_tool.sh`) |
+| `PS5_TITLE_HEAP_SIZE` | unset | fixed heap the loader reserves; unset keeps the boilerplate's value (`build_native_tool.sh`) |
 | `PS5_CLANG` | `clang-18` from `PATH` | host clang of LLVM 18 |
 | `LLVM_CONFIG` | detected | `llvm-config` of the same LLVM |
 
@@ -154,12 +160,12 @@ kept, with their notices, in this directory:
 | Source | Used for | Local copy |
 | --- | --- | --- |
 | [blackbearreloaded/ps5-opengl](https://github.com/blackbearreloaded/ps5-opengl) v1.0.2, GPL-3.0-or-later | static OpenGL (`libPS5OpenGL.a` + mesa), the SDL2 integration | `locale_shims.c` (verbatim), `app_heap.c` (verbatim), `patches/ps5-opengl-sdl2-static.patch` |
-| [drakmor/ps5-native-app-boilerplate](https://github.com/drakmor/ps5-native-app-boilerplate) `470695e`, GPL-3.0-or-later | `ps5-native-tool`, `app_crt.cpp`, `app_cpp_runtime.cpp`, `ps5-pie.ld`, `app-symbols.map`, `runtime/libc.prx` | `build_native_tool.sh` applies one heap-size change |
+| [blackbearreloaded/ps5-native-app-boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate) `44ae1da`, GPL-3.0-or-later | `ps5-native-tool`, `app_crt.cpp`, `app_cpp_runtime.cpp`, `ps5-pie.ld`, `runtime/libc.prx` | `ps5-pie.ld` adds the OpenGL unwind bounds, `app-symbols.map` is a local copy |
 | LLVM compiler-rt, Apache-2.0 WITH LLVM-exception | emulated TLS (`__emutls_get_address`) | `emutls.c` |
 
-`app_crt.cpp`, `app_cpp_runtime.cpp`, `ps5-pie.ld` and `app-symbols.map` are read
-from the boilerplate checkout at build time; only the files above are copies
-inside this repository.
+`app_crt.cpp` and `app_cpp_runtime.cpp` are read from the boilerplate checkout at
+build time; its `ps5-pie.ld` is kept here with the OpenGL unwind bounds added,
+and its `app-symbols.map` as a local copy.
 
 ## Known limitations
 
