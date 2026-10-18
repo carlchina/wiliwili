@@ -44,6 +44,20 @@ if [[ -n ${output} ]]; then
     echo "==> [title] Saved to ${output}" >&2
 fi
 
+# The crash report (scripts/ps5/title/crash_report.cpp) is written beside the
+# log when the application faulted; symbolize it with
+# scripts/ps5/title/symbolize_crash.py and the build's title/llvm-pie.elf.
+crash=$(curl --silent --show-error --max-time 30 \
+    "ftp://${host}:${port}/data/wiliwili/crash-last.txt") || true
+if [[ -n ${crash} && ${crash} != *"Failed to open file"* ]]; then
+    echo "==> [title] /data/wiliwili/crash-last.txt on ${host}" >&2
+    printf '%s\n' "${crash}"
+    if [[ -n ${output} ]]; then
+        printf '%s\n' "${crash}" > "${output%.*}.crash.txt"
+        echo "==> [title] Saved to ${output%.*}.crash.txt" >&2
+    fi
+fi
+
 if [[ ${klog_seconds} != 0 ]]; then
     echo "==> [title] Kernel log of ${host}:3232 (${klog_seconds}s)" >&2
     if command -v nc > /dev/null; then

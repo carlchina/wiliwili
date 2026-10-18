@@ -122,6 +122,9 @@ compile c++20 "$PS5_BOILERPLATE/tooling/native/app_cpp_runtime.cpp" \
 # the whole malloc family into it (see --wrap below).
 compile c11 "$title_dir/app_heap.c" "$work_dir/obj/app_heap.o"
 compile c11 "$title_dir/runtime_shims.c" "$work_dir/obj/runtime_shims.o"
+# Linked right after the log shim so its constructor installs the handlers once
+# stdout is the log file.
+compile c++20 "$title_dir/crash_report.cpp" "$work_dir/obj/crash_report.o"
 compile c11 "$title_dir/locale_shims.c" "$work_dir/obj/locale_shims.o"
 compile c11 "$title_dir/libc_shims.c" "$work_dir/obj/libc_shims.o"
 # The statically linked OpenGL implementation keeps its context in emulated TLS,
@@ -223,6 +226,7 @@ cd "$build_dir"
     -e _start --error-limit=0 -o "$work_dir/llvm-pie.elf" \
     "$work_dir/obj/app_crt.o" "$work_dir/obj/app_cpp_runtime.o" \
     "$work_dir/obj/app_heap.o" "$work_dir/obj/runtime_shims.o" \
+    "$work_dir/obj/crash_report.o" \
     "$work_dir/obj/locale_shims.o" "$work_dir/obj/libc_shims.o" \
     "$work_dir/obj/emutls.o" "${objects[@]}" \
     --start-group "$group" "${archives[@]}" --end-group \
@@ -262,7 +266,7 @@ cp "$PS5_BOILERPLATE/runtime/libc.prx" "$out_dir/sce_module/libc.prx"
 # A title reads its assets from the folder it was installed from.
 cp -a "$root/resources" "$out_dir/resources"
 # Finder leaves these behind in a source tree, they have no place on a console
-find "$out_dir/resources" -name .DS_Store -delete
+find "$out_dir" -name .DS_Store -delete
 
 "$PS5_NATIVE_TOOL" self --inspect --file "$out_dir/eboot.bin"
 printf 'Native title: %s\n' "$out_dir"

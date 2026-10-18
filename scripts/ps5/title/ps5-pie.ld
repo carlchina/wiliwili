@@ -24,8 +24,12 @@ SECTIONS {
     .text 0 : ALIGN(CONSTANT(MAXPAGESIZE)) {
         QUAD(0xcccccccccccccccc)
         QUAD(0xcccccccccccccccc)
+        /* The crash report (scripts/ps5/title/crash_report.cpp) reports code
+         * addresses as offsets from these. */
+        PROVIDE_HIDDEN(__wiliwili_text_start = .);
         *(.text .text.*)
         *(.plt .plt.*)
+        PROVIDE_HIDDEN(__wiliwili_text_end = .);
     } : text
 
     .eh_frame_hdr : ALIGN(CONSTANT(MAXPAGESIZE)) {
