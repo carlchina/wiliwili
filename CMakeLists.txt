@@ -183,6 +183,12 @@ else ()
     set(BRLS_RESOURCES_DIR ".")
 endif ()
 
+# PS5 (Prospero) is running the app from a homebrew directory instead of a package,
+# so its resources are loaded from the directory it is deployed to.
+if (PLATFORM_PS5)
+    set(BRLS_PLATFORM_RESOURCES_PATH "\"/data/homebrew/wiliwili/resources/\"")
+endif ()
+
 # source cpp
 file(GLOB_RECURSE MAIN_SRC wiliwili/source/*.cpp)
 if (WIN32)
@@ -300,6 +306,59 @@ elseif (PLATFORM_PS4)
             COMMAND "${CMAKE_COMMAND}" -E rename ${CMAKE_BINARY_DIR}/ps4/resources/i18n/ja-RYU ${CMAKE_BINARY_DIR}/ps4/resources/i18n/RYU
     )
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
+elseif (PLATFORM_PS5)
+    # PS5 homebrew payload: a directory holding the executable, its resources and
+    # the libraries it links against, which can be uploaded to the console with
+    # scripts/ps5/deploy.sh and shows up in the launcher served by the websrv
+    # payload (http://<ps5>:8080/) under the name of the directory.
+    set(PS5_APP_DIR ${CMAKE_BINARY_DIR}/ps5)
+
+    # The console has no libGL.so.1 of its own, the executable takes it from the
+    # pacbrew mesa packages. Ship the three files so that the deployed directory
+    # works on a console which never had those packages installed, the launcher
+    # entry and deploy.sh put the application's lib directory on LD_LIBRARY_PATH.
+    set(PS5_LIB_DIR "$ENV{PS5_PAYLOAD_SDK}/target/user/homebrew/lib")
+    set(PS5_LIB_FILES
+            "${PS5_LIB_DIR}/libGL.so.1"
+            "${PS5_LIB_DIR}/libvulkan.so.1")
+    file(GLOB PS5_LIB_GALLIUM "${PS5_LIB_DIR}/libgallium-*.so")
+    list(APPEND PS5_LIB_FILES ${PS5_LIB_GALLIUM})
+    set(PS5_LIB_COMMANDS "")
+    foreach (PS5_LIB ${PS5_LIB_FILES})
+        if (NOT EXISTS "${PS5_LIB}")
+            continue()
+        endif ()
+        # the SDK ships some of them as symlinks, the console needs the file itself
+        get_filename_component(PS5_LIB_REAL "${PS5_LIB}" REALPATH)
+        get_filename_component(PS5_LIB_NAME "${PS5_LIB}" NAME)
+        list(APPEND PS5_LIB_COMMANDS
+                COMMAND "${CMAKE_COMMAND}" -E make_directory ${PS5_APP_DIR}/lib
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${PS5_LIB_REAL} ${PS5_APP_DIR}/lib/${PS5_LIB_NAME})
+    endforeach ()
+    if (NOT PS5_LIB_COMMANDS)
+        message(WARNING "No mesa libraries in '${PS5_LIB_DIR}', the executable will only start on a "
+                "console which already has libGL.so.1, libgallium and libvulkan.so.1 installed")
+    endif ()
+
+    add_custom_target(${PROJECT_NAME}.data
+            COMMAND "${CMAKE_COMMAND}" -E make_directory ${PS5_APP_DIR}
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory ${PROJECT_RESOURCES} ${PS5_APP_DIR}/resources
+            COMMAND "${CMAKE_COMMAND}" -E copy ${CMAKE_SOURCE_DIR}/scripts/ps5/homebrew.js ${PS5_APP_DIR}/homebrew.js
+            COMMAND "${CMAKE_COMMAND}" -E copy ${CMAKE_SOURCE_DIR}/scripts/ps5/tile/index.html ${PS5_APP_DIR}/index.html
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory ${CMAKE_SOURCE_DIR}/scripts/ps5/sce_sys ${PS5_APP_DIR}/sce_sys
+            ${PS5_LIB_COMMANDS}
+            VERBATIM
+    )
+    add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
+    # homebrew payloads are started by their file name, the name eboot.elf is the
+    # convention shared by the homebrew launcher and websrv (ps5-payload-dev/websrv)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_FILE:${PROJECT_NAME}> ${PS5_APP_DIR}/eboot.elf
+            COMMENT "Copying eboot.elf to ${PS5_APP_DIR}")
+
+    # the launcher sets LD_LIBRARY_PATH, this is a fallback for the case the
+    # dynamic loader of the console ignores the environment
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-rpath,/data/homebrew/wiliwili/lib")
 elseif (PLATFORM_SWITCH)
     set(BUILD_FONT_DIR ${CMAKE_BINARY_DIR}/resources/font)
     if (GIT_TAG_VERSION)
