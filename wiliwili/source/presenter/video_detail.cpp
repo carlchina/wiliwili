@@ -16,6 +16,66 @@
 #include "bilibili/result/mine_collection_result.h"
 #include "view/video_snapshot_core.hpp"
 
+namespace
+{
+
+/**
+ * The comments of a video, read from the document the server sends.
+ *
+ * The document is read as a stream and not as a tree: a video with many
+ * comments has a document of tens of megabytes, and a tree of it does not
+ * fit in the console's memory.
+ */
+void parseDanmakuXml(const std::string& xml, std::vector<DanmakuItem>& items) {
+    size_t pos = 0;
+    while ((pos = xml.find("<d ", pos)) != std::string::npos) {
+        // <d p="time,type,size,color,time,mode,...">the comment</d>
+        size_t attributesAt = xml.find("p=\"", pos);
+        if (attributesAt == std::string::npos) break;
+        size_t attributesEnd = xml.find('"', attributesAt + 3);
+        if (attributesEnd == std::string::npos) break;
+        size_t textAt = xml.find('>', attributesEnd);
+        if (textAt == std::string::npos) break;
+        size_t textEnd = xml.find("</d>", textAt);
+        if (textEnd == std::string::npos) break;
+
+        std::string attributes = xml.substr(attributesAt + 3, attributesEnd - attributesAt - 3);
+        std::string text       = xml.substr(textAt + 1, textEnd - textAt - 1);
+        // The entities the comments may carry.
+        for (size_t at = text.find('&'); at != std::string::npos; at = text.find('&', at)) {
+            size_t end = text.find(';', at);
+            if (end == std::string::npos || end - at > 10) break;
+            std::string entity = text.substr(at + 1, end - at - 1);
+            std::string decoded;
+            if (entity == "amp") {
+                decoded = "&";
+            } else if (entity == "lt") {
+                decoded = "<";
+            } else if (entity == "gt") {
+                decoded = ">";
+            } else if (entity == "quot") {
+                decoded = "\"";
+            } else if (entity == "apos") {
+                decoded = "'";
+            } else {
+                at = end;
+                continue;
+            }
+            text.replace(at, end - at + 1, decoded);
+            at += decoded.size();
+        }
+
+        try {
+            items.emplace_back(text, attributes.c_str());
+        } catch (...) {
+            brls::Logger::error("DANMAKU: error decode: {}", text);
+        }
+        pos = textEnd + 4;
+    }
+}
+
+}  // namespace
+
 /// 请求视频数据
 void VideoDetail::requestData(const bilibili::VideoDetailResult& video) { this->requestVideoInfo(video.bvid); }
 
@@ -483,31 +543,11 @@ void VideoDetail::requestVideoDanmaku(uint64_t cid) {
             ASYNC_RELEASE
             brls::Logger::debug("DANMAKU: start decode");
 
-            // Load XML
-            tinyxml2::XMLDocument document = tinyxml2::XMLDocument();
-            tinyxml2::XMLError error       = document.Parse(result.c_str());
-
-            if (error != tinyxml2::XMLError::XML_SUCCESS) {
-                brls::Logger::error("Error decode danmaku xml[1]: {}", std::to_string(error));
-                return;
-            }
-            tinyxml2::XMLElement* element = document.RootElement();
-            if (!element) {
-                brls::Logger::error("Error decode danmaku xml[2]: no root element");
-                return;
-            }
-
+            // The comments are read as a stream: the document of a video with
+            // many comments is tens of megabytes, and a tree of it does not
+            // fit in the console's memory.
             std::vector<DanmakuItem> items;
-            for (auto child = element->FirstChildElement(); child != nullptr; child = child->NextSiblingElement()) {
-                if (child->Name()[0] != 'd') continue;  // 简易判断是不是弹幕
-                const char* content = child->GetText();
-                if (!content) continue;
-                try {
-                    items.emplace_back(content, child->Attribute("p"));
-                } catch (...) {
-                    brls::Logger::error("DANMAKU: error decode: {}", child->GetText());
-                }
-            }
+            parseDanmakuXml(result, items);
 
             brls::sync([items]() { DanmakuCore::instance().loadDanmakuData(items); });
 

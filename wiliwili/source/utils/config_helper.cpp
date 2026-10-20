@@ -114,6 +114,11 @@ unsigned int sceLibcHeapSize             = 24 * 1024 * 1024;
 #define WILI_DNS_CACHE_TIMEOUT 60000
 #endif
 
+#if defined(PS5)
+// The console's language: the parameter 1 is the system language.
+extern "C" int sceSystemServiceParamGetInt(int param, int* value);
+#endif
+
 using namespace brls::literals;
 
 std::unordered_map<SettingItem, ProgramOption> ProgramConfig::SETTING_MAP = {
@@ -687,7 +692,37 @@ void ProgramConfig::load() {
     if (langData != brls::LOCALE_AUTO && i18nData.count(langData)) {
         brls::Platform::APP_LOCALE_DEFAULT = langData;
     } else {
-#if !defined(__SWITCH__) && !defined(__PSV__) && !defined(PS4) && !defined(PS5)
+#if defined(PS5)
+        // The console knows its own language; SDL does not.
+        int consoleLanguage = -1;
+        if (sceSystemServiceParamGetInt(1, &consoleLanguage) == 0) {
+            switch (consoleLanguage) {
+                case 0:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_JA;
+                    break;
+                case 1:
+                case 18:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_EN_US;
+                    break;
+                case 5:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_IT;
+                    break;
+                case 9:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_Ko;
+                    break;
+                case 10:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_ZH_HANT;
+                    break;
+                case 11:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_ZH_HANS;
+                    break;
+                default:
+                    brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_EN_US;
+                    break;
+            }
+            brls::Logger::info("console language: {}", consoleLanguage);
+        }
+#elif !defined(__SWITCH__) && !defined(__PSV__) && !defined(PS4)
         brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_ZH_HANS;
 #endif
     }

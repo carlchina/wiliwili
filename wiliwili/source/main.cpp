@@ -13,6 +13,7 @@
 
 #include "utils/config_helper.hpp"
 #include "utils/activity_helper.hpp"
+#include "utils/ps5_decoder.hpp"
 #include "view/mpv_core.hpp"
 
 #ifdef IOS
@@ -33,13 +34,23 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Load cookies and settings
-    ProgramConfig::instance().init();
-
 #ifdef PS5
     // The console title cannot take command line options; keep a debug log to
     // diagnose the remaining network layers through the crash reporter fetch.
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
+    // The queue the console's hardware video decoder runs on has to be made
+    // before the application asks for full access, and the crash reporter has
+    // to be there to say what went wrong.
+    ps5decoder::wiliwili_ps5_decoder_prepare();
+#endif
+
+    // Load cookies and settings
+    ProgramConfig::instance().init();
+
+#ifdef PS5
+    // The console's hardware video decoder, with the test streams that ship
+    // with the application.
+    ps5decoder::Decoder::selfTest();
 #endif
 
     // Init the app and i18n

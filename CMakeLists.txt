@@ -197,6 +197,11 @@ if (PLATFORM_PS5)
     else ()
         set(BRLS_PLATFORM_RESOURCES_PATH "\"/data/homebrew/wiliwili/resources/\"")
     endif ()
+    # The console's video decoder is a system module: the title imports its
+    # functions and the console's loader fills the imports in when the module
+    # is loaded. The intermediate link may leave them undefined; the title's
+    # own link resolves them against the module.
+    list(APPEND APP_PLATFORM_LINK_OPTION "-Wl,--unresolved-symbols=ignore-all")
     # The console's hardware video decoder lives in a system module that is
     # not loaded by default; the application loads it on startup.
     list(APPEND APP_PLATFORM_LIB SceSysmodule)

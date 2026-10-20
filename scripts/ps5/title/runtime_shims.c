@@ -71,6 +71,7 @@ static FILE *wiliwili_log_open(const char *directory)
  * access, so it is loaded here, in the constructor that runs before main().
  */
 extern int wiliwili_videodec2_prepare(void);
+extern int wiliwili_ps5_decoder_prepare(void);
 static void wiliwili_report_memory(void);
 
 __attribute__((constructor)) static void wiliwili_open_log(void)
