@@ -197,6 +197,9 @@ if (PLATFORM_PS5)
     else ()
         set(BRLS_PLATFORM_RESOURCES_PATH "\"/data/homebrew/wiliwili/resources/\"")
     endif ()
+    # The console's hardware video decoder lives in a system module that is
+    # not loaded by default; the application loads it on startup.
+    list(APPEND APP_PLATFORM_LIB SceSysmodule)
 endif ()
 
 # source cpp

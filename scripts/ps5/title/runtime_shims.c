@@ -65,13 +65,63 @@ static FILE *wiliwili_log_open(const char *directory)
     return stream;
 }
 
+/**
+ * The console's hardware video decoder is a system module that is not loaded
+ * by default. It has to be there before the application asks for full
+ * access, so it is loaded here, in the constructor that runs before main().
+ */
+extern int wiliwili_videodec2_prepare(void);
+static void wiliwili_report_memory(void);
+
 __attribute__((constructor)) static void wiliwili_open_log(void)
 {
     const char *directories[] = {"/data/wiliwili", "/download0", NULL};
     for (size_t i = 0; directories[i] != NULL; ++i) {
         if (wiliwili_log_open(directories[i]) != NULL)
-            return;
+            break;
     }
+
+    wiliwili_videodec2_prepare();
+    wiliwili_report_memory();
+}
+
+/**
+ * The console has 16 GiB, but a title runs in a sandbox and only gets a
+ * slice of it, sized by the system's policy for its content id. These are
+ * the pools the application may actually use.
+ */
+static void wiliwili_report_memory(void)
+{    extern int sceKernelConfiguredFlexibleMemorySize(size_t *configured);
+    extern int sceKernelAvailableFlexibleMemorySize(size_t *available);
+    extern int sceKernelAllocateDirectMemory(int64_t, int64_t, size_t, size_t, int, int64_t *);
+    extern int sceKernelReleaseDirectMemory(int64_t, size_t);
+
+    size_t configured = 0, available = 0;
+    if (sceKernelConfiguredFlexibleMemorySize(&configured) == 0) {
+        if (sceKernelAvailableFlexibleMemorySize(&available) != 0)
+            available = 0;
+        fprintf(stderr, "[wiliwili] flexible memory: %zu MiB free of %zu MiB\n",
+                available >> 20, configured >> 20);
+    }
+
+    /* The direct memory is the pool the graphics chip reads from: measure
+     * how much of it the title may have by taking it and giving it back.
+     * The second argument is the limit the console reports for the process. */
+    extern int64_t sceKernelGetDirectMemorySize(void);
+    const int64_t direct_limit = sceKernelGetDirectMemorySize();
+    const size_t chunk = 4u << 20;
+    size_t total = 0;
+    for (int i = 0; i < 1024; i++) {
+        int64_t direct = -1;
+        if (sceKernelAllocateDirectMemory(0, direct_limit, chunk, 0x4000, 12, &direct) != 0)
+            break;
+        total += chunk;
+        if (sceKernelReleaseDirectMemory(direct, chunk) != 0)
+            break;
+    }
+    fprintf(stderr, "[wiliwili] direct memory: %zu MiB available of %lld MiB\n",
+            total >> 20, (long long)(direct_limit >> 20));
+    fflush(stderr);
 }
 
 __attribute__((noreturn)) void __assert(const char *function, const char *file, int line,
