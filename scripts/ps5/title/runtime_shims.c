@@ -53,7 +53,10 @@ static FILE *wiliwili_log_open(const char *directory)
     char path[256];
     if ((size_t)snprintf(path, sizeof(path), "%s/wiliwili-title.log", directory) >= sizeof(path))
         return NULL;
-    FILE *stream = freopen(path, "w", stdout);
+    // Append-only writes on both streams keep the file free of two-writer
+    // offset races: every write lands at end-of-file, so lines never clobber
+    // each other.
+    FILE *stream = freopen(path, "a", stdout);
     if (stream == NULL)
         return NULL;
     setvbuf(stream, NULL, _IOLBF, 0);
@@ -126,13 +129,6 @@ int isatty(int descriptor)
     (void)descriptor;
     errno = ENOTTY;
     return 0;
-}
-
-void openlog(const char *identifier, int option, int facility)
-{
-    (void)identifier;
-    (void)option;
-    (void)facility;
 }
 
 FILE *popen(const char *command, const char *mode)

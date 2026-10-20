@@ -94,7 +94,13 @@ public:
     inline static const std::string note_custom_ext = "@{}w_{}h_85q_!note-comment-multiple" IMAGE_EXT;
 
     /// 图片请求线程数
+#ifdef PS5
+    // The console needs more of them: releasing a curl handle waits for the
+    // peer to close the connection, which holds a worker for a few seconds.
+    inline static size_t REQUEST_THREADS = 4;
+#else
     inline static size_t REQUEST_THREADS = 1;
+#endif
 
 protected:
     virtual void requestImage();

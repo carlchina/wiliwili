@@ -363,6 +363,64 @@ pid_t setsid(void)
     return getpid();
 }
 
+/* ---- fcntl on sockets ---------------------------------------------------------------------- */
+
+/* In a sandboxed title the console's libc refuses fcntl on sockets with
+ * EINVAL. curl then fails every transfer ("fcntl set CLOEXEC: Invalid
+ * argument") and its sockets stay blocking. Linked with --wrap=fcntl, every
+ * fcntl call in the application and its archives arrives here; only a call
+ * the real libc refuses is treated as a socket request. */
+extern int __real_fcntl(int descriptor, int command, ...);
+
+/* The console's own non-blocking socket option. */
+enum { SOCKET_OPTION_NONBLOCKING = 0x1200 };
+
+static int socket_flags(int descriptor, int command, int value)
+{
+    switch (command)
+    {
+    case F_GETFD:
+    case F_SETFD:
+        return 0; /* a title never execs another program, no descriptor flags needed */
+    case F_SETFL:
+    {
+        const int nonblocking = (value & O_NONBLOCK) != 0;
+        return setsockopt(descriptor, SOL_SOCKET, SOCKET_OPTION_NONBLOCKING,
+                          &nonblocking, sizeof(nonblocking));
+    }
+    case F_GETFL:
+    {
+        int nonblocking = 0;
+        socklen_t length = sizeof(nonblocking);
+        if (getsockopt(descriptor, SOL_SOCKET, SOCKET_OPTION_NONBLOCKING,
+                       &nonblocking, &length) < 0)
+            return -1;
+        return O_RDWR | (nonblocking ? O_NONBLOCK : 0);
+    }
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+int __wrap_fcntl(int descriptor, int command, ...)
+{
+    va_list arguments;
+    va_start(arguments, command);
+    /* Every command this application and its libraries use carries an int
+     * or a pointer as the optional argument. */
+    const intptr_t argument = va_arg(arguments, intptr_t);
+    va_end(arguments);
+    const int result = __real_fcntl(descriptor, command, argument);
+    if (result >= 0 || errno != EINVAL)
+        return result;
+    if (command == F_GETFD || command == F_SETFD || command == F_SETFL ||
+        command == F_GETFL)
+        return socket_flags(descriptor, command, (int)argument);
+    return result;
+}
+
+
 /* A title shares its address space with the libraries it runs, there is no
  * second copy of it to create. */
 pid_t fork(void)

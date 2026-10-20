@@ -36,6 +36,12 @@ int main(int argc, char* argv[]) {
     // Load cookies and settings
     ProgramConfig::instance().init();
 
+#ifdef PS5
+    // The console title cannot take command line options; keep a debug log to
+    // diagnose the remaining network layers through the crash reporter fetch.
+    brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
+#endif
+
     // Init the app and i18n
     if (!brls::Application::init()) {
         brls::Logger::error("Unable to init application");

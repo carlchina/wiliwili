@@ -33,15 +33,26 @@ while getopts "h:p:k:o:" opt; do
 done
 
 echo "==> [title] /data/wiliwili/wiliwili-title.log on ${host}" >&2
-log=$(curl --silent --show-error --fail --max-time 30 \
-    "ftp://${host}:${port}/data/wiliwili/wiliwili-title.log") || {
-    echo "the log could not be read; the title may never have started" >&2
-    exit 1
+fetch_log() {
+    # Read the file over FTP into a temp file first. Capturing curl in a
+    # command substitution truncates the stream in some configurations.
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/wiliwili-fetch.XXXXXX") || return 1
+    if ! curl --silent --show-error --fail --max-time 30 \
+        "ftp://${host}:${port}/data/wiliwili/wiliwili-title.log" -o "${tmp}"; then
+        rm -f "${tmp}"
+        echo "the log could not be read; the title may never have started" >&2
+        return 1
+    fi
+    printf '%s\n' "${tmp}"
 }
-printf '%s\n' "${log}"
-if [[ -n ${output} ]]; then
-    printf '%s\n' "${log}" > "${output}"
-    echo "==> [title] Saved to ${output}" >&2
+tmp_log=$(fetch_log) || exit 1
+echo "## wiliwili-title.log ($(wc -c < "${tmp_log}") bytes)" >&2
+if [[ ${output} == "" ]]; then
+    cat "${tmp_log}"
+else
+    cp "${tmp_log}" "${output}"
+    echo "==> [title] Saved to ${output} ($(wc -c < "${output}") bytes)" >&2
 fi
 
 # The crash report (scripts/ps5/title/crash_report.cpp) is written beside the
@@ -55,6 +66,20 @@ if [[ -n ${crash} && ${crash} != *"Failed to open file"* ]]; then
     if [[ -n ${output} ]]; then
         printf '%s\n' "${crash}" > "${output%.*}.crash.txt"
         echo "==> [title] Saved to ${output%.*}.crash.txt" >&2
+    fi
+fi
+
+# The logger probes (library/borealis/library/include/borealis/core/logger.hpp)
+# show which step of a log call stalls, if any.
+probe=$(curl --silent --show-error --max-time 30 \
+    "ftp://${host}:${port}/data/wiliwili/logprobe.log") || true
+if [[ -n ${probe} && ${probe} != *"Failed to open file"* ]]; then
+    echo "==> [title] /data/wiliwili/logprobe.log on ${host}" >&2
+    if [[ -n ${output} ]]; then
+        printf '%s\n' "${probe}" > "${output%.*}.probe.txt"
+        echo "==> [title] Saved to ${output%.*}.probe.txt" >&2
+    else
+        printf '%s\n' "${probe}"
     fi
 fi
 

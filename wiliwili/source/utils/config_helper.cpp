@@ -1056,6 +1056,9 @@ void ProgramConfig::init() {
     ps4_mpv_dump_shaders            = 0;
     // 在加载第一帧之后隐藏启动画面
     brls::sync([]() { sceSystemServiceHideSplashScreen(); });
+#elif defined(PS5)
+    // getcwd() 不再调用：PS5 加载环境下系统 libc 的 getcwd 内部会跳到未解析
+    // 地址导致 SIGSEGV，而这行日志并非必需。
 #else
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != nullptr) {

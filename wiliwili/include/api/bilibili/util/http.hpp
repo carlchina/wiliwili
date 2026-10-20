@@ -7,6 +7,11 @@
 #include <nlohmann/json.hpp>
 #include <cpr/cpr.h>
 
+#ifdef PS5
+#include <sys/socket.h>
+#include <sys/time.h>
+#endif
+
 #include "bilibili/util/md5.hpp"
 #include "bilibili/util/json.hpp"
 #include "bilibili/util/wbi.hpp"
@@ -80,11 +85,35 @@ public:
 
     static std::string getEncodedCookie(const cpr::Cookies& cookies);
 
+#ifdef PS5
+    /**
+     * On this console libcurl blocks for minutes when a handle is torn down:
+     * closing the TLS connection waits for the peer's close_notify, which the
+     * servers never send, so the socket read only returns once the kernel
+     * gives up on the connection - about two minutes later. A receive timeout
+     * on the socket bounds that wait to a few seconds.
+     */
+    static int curlSocketOption(void* /*clientp*/, curl_socket_t fd, curlsocktype /*purpose*/) {
+        struct timeval timeout;
+        timeout.tv_sec  = 3;
+        timeout.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        return 0;
+    }
+
+    static void applySocketOptions(CURL* curl) {
+        curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, &HTTP::curlSocketOption);
+    }
+#endif
+
     static std::shared_ptr<cpr::Session> createSession() {
         auto session = std::make_shared<cpr::Session>();
         CURL* curl = session->GetCurlHolder()->handle;
         curl_easy_setopt(curl, CURLOPT_SHARE, HTTP::CURL_SHARE.getShare());
         curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, HTTP::DNS_CACHE_TIMEOUT);
+#ifdef PS5
+        HTTP::applySocketOptions(curl);
+#endif
         session->SetTimeout(cpr::Timeout{bilibili::HTTP::TIMEOUT});
         session->SetConnectTimeout(cpr::ConnectTimeout{bilibili::HTTP::CONNECTION_TIMEOUT});
         session->SetHeader(bilibili::HTTP::HEADERS);

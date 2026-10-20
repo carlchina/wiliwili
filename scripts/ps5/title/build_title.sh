@@ -137,6 +137,56 @@ compile c11 "$title_dir/emutls.c" "$work_dir/obj/emutls.o"
 "$PS5_PAYLOAD_SDK/bin/prospero-ar" rcs "$work_dir/libpthread.a" \
     "$work_dir/obj/app_cpp_runtime.o"
 
+# The title cannot load libScePosixForWebKit, so everything that resolves
+# through it is supplied statically instead. A private copy of the SDK's own
+# libc archive fills the holes. Members that would define a symbol the shims
+# above already own get that symbol weakened, so the shim keeps owning it
+# while every other definition in the member still satisfies references.
+app_libc="$work_dir/libc-app.a"
+cp -- "$PS5_PAYLOAD_SDK/target/lib/libc.a" "$app_libc"
+shim_objects="$work_dir/obj/runtime_shims.o $work_dir/obj/libc_shims.o \
+$work_dir/obj/locale_shims.o"
+/opt/homebrew/opt/llvm@18/bin/llvm-nm --defined-only $shim_objects 2>/dev/null |
+    sed 's/.* //' | sort -u > "$work_dir/libc-patch-shims.txt"
+/opt/homebrew/opt/llvm@18/bin/llvm-nm --defined-only \
+    "$PS5_PAYLOAD_SDK/target/lib/libc.a" 2>/dev/null |
+    sed 's/.* //' | sort -u > "$work_dir/libc-patch-all.txt"
+weaken_member() {
+    local member=$1
+    local archive=$2 object flags symbol
+    object="$work_dir/libc-patch/$member"
+    mkdir -p "$(dirname -- "$object")"
+    (cd "$work_dir" &&
+        "$PS5_PAYLOAD_SDK/bin/prospero-ar" x "$archive" "$member" &&
+        mv -f "$member" "$object") >/dev/null 2>&1 || return 0
+    flags=()
+    while IFS= read -r symbol; do
+        [[ $symbol =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        grep -qxF "$symbol" "$work_dir/libc-patch-shims.txt" &&
+            grep -qxF "$symbol" "$work_dir/libc-patch-all.txt" &&
+            flags+=(--weaken-symbol="$symbol")
+    done < "$work_dir/libc-patch-all.txt"
+    flags=($(printf '%s\n' "${flags[@]}" | sort -u))
+    if ((${#flags[@]} > 0)); then
+        /opt/homebrew/opt/llvm@18/bin/llvm-objcopy "${flags[@]}" "$object"
+        "$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$archive" "$member"
+        (cd "$work_dir/libc-patch" &&
+            "$PS5_PAYLOAD_SDK/bin/prospero-ar" r "$archive" "$member")
+    fi
+}
+mkdir -p "$work_dir/libc-patch"
+rm -rf -- "$work_dir"/libc-patch/*
+for member in syscalls.o gmtime.o dlfcn.o no-locale.o syslog.o; do
+    weaken_member "$member" "$app_libc"
+done
+# mman.o maps its syscalls through internal "kernel_*" names that the public
+# SDK stubs do not export; deleting it keeps mprotect/mmap as plain imports,
+# which resolved against the real modules in every console run so far.
+"$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$app_libc" mman.o 2>/dev/null || true
+# dlfcn.o drags the internal "__dlopen" helper in; the dynamic loader family
+# stays a plain (unused) import instead, as before libc was linked.
+"$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$app_libc" dlfcn.o 2>/dev/null || true
+
 # The OpenGL SDK's import libraries are handed to the converter as well, so the
 # driver's imports resolve to the console's own modules.
 group="$work_dir/libps5opengl-group.a"
@@ -220,7 +270,7 @@ cd "$build_dir"
 "$PS5_PAYLOAD_SDK/bin/prospero-lld" -T "$title_dir/ps5-pie.ld" --eh-frame-hdr \
     --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free --wrap=posix_memalign \
     --wrap=malloc_usable_size --wrap=fopen \
-    --wrap=readlink --wrap=symlink --wrap=link \
+    --wrap=readlink --wrap=symlink --wrap=link --wrap=fcntl \
     --version-script "$title_dir/app-symbols.map" \
     --exclude-libs=ALL -L "$work_dir" \
     -e _start --error-limit=0 -o "$work_dir/llvm-pie.elf" \
@@ -229,7 +279,8 @@ cd "$build_dir"
     "$work_dir/obj/crash_report.o" \
     "$work_dir/obj/locale_shims.o" "$work_dir/obj/libc_shims.o" \
     "$work_dir/obj/emutls.o" "${objects[@]}" \
-    --start-group "$group" "${archives[@]}" --end-group \
+    --start-group "$group" "${archives[@]}" \
+    "$app_libc" --end-group \
     --as-needed "$PS5_OPENGL_PREFIX/lib/libSceAgc.so" \
     "$PS5_OPENGL_PREFIX/lib/libSceAgcDriver.so" \
     "$PS5_PAYLOAD_SDK"/target/lib/*.so
