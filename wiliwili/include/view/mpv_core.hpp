@@ -371,9 +371,9 @@ public:
 #elif defined(PS4)
     inline static std::string PLAYER_HWDEC_METHOD = "no";
 #elif defined(PS5)
-    // The PS5 uses mesa (OpenGL on top of Vulkan), hardware decoding is
-    // not available, so videos are always decoded by the CPU.
-    inline static std::string PLAYER_HWDEC_METHOD = "no";
+    // The console has a video chip of its own: the decoder that runs on it
+    // is part of the player. It is asked for by name.
+    inline static std::string PLAYER_HWDEC_METHOD = "h264_ps5";
 #else
     inline static std::string PLAYER_HWDEC_METHOD = "auto-safe";
 #endif

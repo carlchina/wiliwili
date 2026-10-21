@@ -1,0 +1,1007 @@
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -10,6 +10,7 @@
+           codec.h                                                       \
+           codec_desc.h                                                  \
+           codec_id.h                                                    \
++          ps5.h                                                        \
+           codec_par.h                                                   \
+           d3d11va.h                                                     \
+           defs.h                                                        \
+@@ -181,6 +182,7 @@
+ 
+ # decoders/encoders
+ OBJS-$(CONFIG_ZERO12V_DECODER)         += 012v.o
++OBJS-$(CONFIG_H264_PS5_DECODER)     += ps5.o
+ OBJS-$(CONFIG_A64MULTI_ENCODER)        += a64multienc.o elbg.o
+ OBJS-$(CONFIG_A64MULTI5_ENCODER)       += a64multienc.o elbg.o
+ OBJS-$(CONFIG_AAC_DECODER)             += aactab.o \
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -831,6 +831,7 @@
+ extern const FFCodec ff_libaom_av1_decoder;
+ /* hwaccel hooks only, so prefer external decoders */
+ extern const FFCodec ff_av1_decoder;
++extern const FFCodec ff_h264_ps5_decoder;
+ extern const FFCodec ff_av1_cuvid_decoder;
+ extern const FFCodec ff_av1_mediacodec_decoder;
+ extern const FFCodec ff_av1_mediacodec_encoder;
+--- a/libavcodec/ps5.c
++++ b/libavcodec/ps5.c
+@@ -0,0 +1,947 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * The console's hardware video decoder: H.264 on the console's own video chip.
++ *
++ * The chip is reached through a system module the application loads at
++ * startup. It wants its access units in the graphics memory, its memory
++ * mapped in a particular way, and it aborts the process when it refuses
++ * work.
++ *
++ * The pictures come out as NV12 (or P010 for ten bit), which the caller
++ * hands on like any other frame.
++ *
++ * The layout of the chip's structures and the way it wants its memory come
++ * from the VLC for PS5 port (ZiZc3/VLC, GPL-2.0-or-later).
++ */
++
++#include "config.h"
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdbool.h>
++#include <string.h>
++
++#include "libavutil/avutil.h"
++#include "libavutil/buffer.h"
++#include "libavutil/mem.h"
++#include "libavutil/pixfmt.h"
++#include "libavutil/log.h"
++
++#include "libavcodec/avcodec.h"
++#include "libavcodec/codec.h"
++#include "libavcodec/codec_internal.h"
++#include "libavcodec/decode.h"
++#include "libavcodec/internal.h"
++#include "libavcodec/ps5.h"
++
++#include <pthread.h>
++#include <signal.h>
++#include <setjmp.h>
++
++/* The console's kernel and its video chip. */
++extern int sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchEnd, size_t len,
++                                          size_t alignment, int type, int64_t* start);
++extern int sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t start,
++                                     size_t alignment);
++extern int sceKernelReleaseDirectMemory(int64_t start, size_t len);
++extern int64_t sceKernelGetDirectMemorySize(void);
++extern int sceKernelMapFlexibleMemory(void** addr, size_t len, int prot, int flags);
++extern int sceKernelMapNamedFlexibleMemory(void** addr, size_t len, int prot, int flags,
++                                           const char* name);
++extern int sceKernelMunmap(void* addr, size_t len);
++
++extern int sceVideodec2QueryComputeMemoryInfo(void* info);
++extern int sceVideodec2AllocateComputeQueue(const void* config, const void* memory, void** queue);
++extern int sceVideodec2QueryDecoderMemoryInfo(const void* config, void* memory);
++extern int sceVideodec2CreateDecoder(const void* config, const void* memory, void** decoder);
++extern int sceVideodec2DeleteDecoder(void* decoder);
++extern int sceVideodec2Decode(void* decoder, const void* input, void* frame, void* output);
++extern int sceVideodec2Flush(void* decoder, void* frame, void* output);
++extern int sceVideodec2Reset(void* decoder);
++
++/* The chip's structures. Their sizes are fixed by the console. */
++enum
++{
++    VDEC_CODEC_AVC  = 1,
++    VDEC_CODEC_HEVC = 974921,
++};
++
++typedef struct VdecConfig
++{
++    uint64_t this_size;
++    uint32_t resource_type;  // 1: decoding on a compute queue
++    uint32_t codec_type;
++    uint32_t profile;
++    uint32_t max_level;
++    int32_t max_frame_width;
++    int32_t max_frame_height;
++    int32_t max_dpb_frame_count;
++    uint32_t decode_pipeline_depth;
++    void* compute_queue;
++    uint64_t cpu_affinity_mask;
++    int32_t cpu_thread_priority;
++    bool optimize_progressive_video;
++    bool check_memory_type;
++    uint8_t reserved0;
++    uint8_t reserved1;
++    void* extra_config_info;
++} VdecConfig;
++
++typedef struct VdecMemory
++{
++    uint64_t this_size;
++    uint64_t cpu_memory_size;
++    void* cpu_memory;
++    uint64_t gpu_memory_size;
++    void* gpu_memory;
++    uint64_t cpu_gpu_memory_size;
++    void* cpu_gpu_memory;
++    uint64_t max_frame_buffer_size;
++    uint32_t frame_buffer_alignment;
++    uint32_t reserved0;
++} VdecMemory;
++
++typedef struct VdecInput
++{
++    uint64_t this_size;
++    void* au_data;
++    uint64_t au_size;
++    uint64_t pts_data;
++    uint64_t dts_data;
++    uint64_t attached_data;
++} VdecInput;
++
++typedef struct VdecOutput
++{
++    uint64_t this_size;
++    bool is_valid;
++    bool is_error_frame;
++    uint8_t picture_count;
++    uint8_t padding;
++    uint32_t codec_type;
++    uint32_t frame_width;
++    uint32_t frame_pitch;  // in samples
++    uint32_t frame_height;
++    uint32_t reserved;
++    void* frame_buffer;
++    uint64_t frame_buffer_size;
++    uint32_t frame_format;
++    uint32_t frame_pitch_in_bytes;
++} VdecOutput;
++
++typedef struct VdecFrameBuffer
++{
++    uint64_t this_size;
++    void* frame_buffer;
++    uint64_t frame_buffer_size;
++    bool is_accepted;
++} VdecFrameBuffer;
++
++typedef struct VdecComputeMemory
++{
++    uint64_t this_size;
++    uint64_t cpu_gpu_memory_size;
++    void* cpu_gpu_memory;
++} VdecComputeMemory;
++
++typedef struct VdecComputeConfig
++{
++    uint64_t this_size;
++    uint16_t compute_pipe_id;
++    uint16_t compute_queue_id;
++    bool check_memory_type;
++    uint8_t reserved0;
++    uint16_t reserved1;
++} VdecComputeConfig;
++
++#if defined(__GNUC__) || defined(__clang__)
++#define PS5_STATIC_ASSERT(cond, name) _Static_assert(cond, name)
++#else
++#define PS5_STATIC_ASSERT(cond, name)
++#endif
++
++PS5_STATIC_ASSERT(sizeof(VdecConfig) == 0x48, "decoder config");
++PS5_STATIC_ASSERT(sizeof(VdecMemory) == 0x48, "decoder memory");
++PS5_STATIC_ASSERT(sizeof(VdecInput) == 0x30, "input");
++PS5_STATIC_ASSERT(sizeof(VdecOutput) == 0x38, "output");
++PS5_STATIC_ASSERT(offsetof(VdecOutput, frame_buffer) == 0x20, "output frame buffer");
++PS5_STATIC_ASSERT(offsetof(VdecOutput, frame_pitch_in_bytes) == 0x34, "output pitch");
++PS5_STATIC_ASSERT(sizeof(VdecFrameBuffer) == 0x20, "frame buffer");
++PS5_STATIC_ASSERT(sizeof(VdecComputeMemory) == 0x18, "compute memory");
++PS5_STATIC_ASSERT(sizeof(VdecComputeConfig) == 0x10, "compute config");
++
++enum
++{
++    PROT_CPU_RW  = 0x03,
++    PROT_CPU_W   = 0x02,
++    PROT_GPU_RW  = 0x30,
++    // The chip checks the protection of the memory it is given: its own
++    // workspaces and the pools the access units and the pictures live in are
++    // written by the console and read by the chip.
++    PROT_CHIP_POOL = PROT_CPU_W | PROT_GPU_RW,
++    DIRECT_TYPE   = 12,
++};
++
++static const size_t PAGE_16K     = 0x4000;
++static const int    AU_SLOTS     = 8;
++static const size_t AU_SLOT_SIZE = (size_t)4 << 20;
++
++/**
++ * The chip aborts the process when it refuses work. The decoder has to
++ * survive that: the signal is caught and the work is given up.
++ */
++static sigjmp_buf g_abortJump;
++static volatile sig_atomic_t g_abortArmed = 0;
++static struct sigaction g_oldAbort;
++static struct sigaction g_oldSegv;
++
++static void abortHandler(int number, siginfo_t* info, void* context)
++{
++    if (g_abortArmed) {
++        g_abortArmed = 0;
++        siglongjmp(g_abortJump, number);
++    }
++    struct sigaction* previous = number == SIGABRT ? &g_oldAbort : &g_oldSegv;
++    if (previous->sa_flags & SA_SIGINFO)
++        previous->sa_sigaction(number, info, context);
++    else if (previous->sa_handler != SIG_DFL && previous->sa_handler != SIG_IGN)
++        previous->sa_handler(number);
++    else {
++        signal(number, SIG_DFL);
++        raise(number);
++    }
++}
++
++/**
++ * Runs the work with the chip's abort caught. Returns 0 when the work was
++ * given up.
++ */
++#define PS5_RUN_GUARDED(work, result)                                                  \
++    do {                                                                                \
++        struct sigaction action;                                                        \
++        memset(&action, 0, sizeof(action));                                             \
++        action.sa_sigaction = abortHandler;                                             \
++        action.sa_flags     = SA_SIGINFO;                                               \
++        sigaction(SIGABRT, &action, &g_oldAbort);                                        \
++        sigaction(SIGSEGV, &action, &g_oldSegv);                                        \
++        g_abortArmed = 1;                                                               \
++        if (sigsetjmp(g_abortJump, 1) == 0) {                                           \
++            work;                                                                       \
++        } else {                                                                        \
++            result = AVERROR_EXTERNAL;                                                  \
++        }                                                                               \
++        g_abortArmed = 0;                                                               \
++        sigaction(SIGABRT, &g_oldAbort, NULL);                                          \
++        sigaction(SIGSEGV, &g_oldSegv, NULL);                                           \
++    } while (0)
++
++static size_t round16k(size_t value)
++{
++    return (value + PAGE_16K - 1) & ~(PAGE_16K - 1);
++}
++
++/**
++ * A block of memory the chip can read. The chip's picture store and its
++ * access units live in the graphics memory; its working memory can be plain
++ * system memory.
++ */
++typedef struct Mem
++{
++    void* addr;
++    size_t len;
++    int64_t start;  // direct memory; -1: flexible; -2: the shared cpu block
++} Mem;
++
++static int memDirect(Mem* mem, size_t len, size_t alignment, int prot)
++{
++    mem->len   = round16k(len);
++    mem->start = -1;
++    mem->addr  = NULL;
++    if (alignment < PAGE_16K)
++        alignment = PAGE_16K;
++    if (sceKernelAllocateDirectMemory(0, sceKernelGetDirectMemorySize(), mem->len, alignment,
++                                      DIRECT_TYPE, &mem->start) != 0)
++        return AVERROR(ENOMEM);
++    if (sceKernelMapDirectMemory(&mem->addr, mem->len, prot, 0, mem->start, alignment) != 0) {
++        sceKernelReleaseDirectMemory(mem->start, mem->len);
++        mem->start = -1;
++        mem->addr  = NULL;
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++static int memFlexible(Mem* mem, size_t len)
++{
++    mem->len   = round16k(len);
++    mem->start = -1;
++    mem->addr  = NULL;
++    if (sceKernelMapFlexibleMemory(&mem->addr, mem->len, PROT_CPU_RW, 0) != 0)
++        return AVERROR(ENOMEM);
++    return 0;
++}
++
++/**
++ * The decoder's working memory. Flexible memory that is given back does not
++ * come back to the pool on this console, so one block is kept and reused.
++ */
++static pthread_mutex_t g_cpuBlockLock = PTHREAD_MUTEX_INITIALIZER;
++static void*           g_cpuBlock     = NULL;
++static size_t          g_cpuBlockLen  = 0;
++static int             g_cpuBlockBusy  = 0;
++
++static int memCpu(Mem* mem, size_t len)
++{
++    len = round16k(len);
++    pthread_mutex_lock(&g_cpuBlockLock);
++    if (!g_cpuBlockBusy) {
++        if (len > g_cpuBlockLen) {
++            // Room for 4K HEVC's 76 MiB, so the block rarely has to grow.
++            size_t want = len > ((size_t)96 << 20) ? len : ((size_t)96 << 20);
++            void* addr   = NULL;
++            // The decoder finds its workspace by name, so it has to be a
++            // named piece of memory.
++            if (sceKernelMapNamedFlexibleMemory(&addr, want, PROT_CPU_RW, 0, "ffmpeg-vdec") == 0) {
++                g_cpuBlock     = addr;
++                g_cpuBlockLen  = want;
++            }
++        }
++        if (g_cpuBlock && len <= g_cpuBlockLen) {
++            g_cpuBlockBusy = 1;
++            mem->addr      = g_cpuBlock;
++            mem->len       = len;
++            mem->start     = -2;
++            pthread_mutex_unlock(&g_cpuBlockLock);
++            return 0;
++        }
++    }
++    pthread_mutex_unlock(&g_cpuBlockLock);
++    return memFlexible(mem, len);
++}
++
++static void memFree(Mem* mem)
++{
++    if (!mem->addr)
++        return;
++    if (mem->start == -2) {
++        pthread_mutex_lock(&g_cpuBlockLock);
++        g_cpuBlockBusy = 0;
++        pthread_mutex_unlock(&g_cpuBlockLock);
++    } else if (mem->start >= 0) {
++        sceKernelMunmap(mem->addr, mem->len);
++        sceKernelReleaseDirectMemory(mem->start, mem->len);
++    } else {
++        sceKernelMunmap(mem->addr, mem->len);
++    }
++    mem->addr  = NULL;
++    mem->len   = 0;
++    mem->start = -1;
++}
++
++/**
++ * The queue the application made. The console gives one only: it has to be
++ * made before the application asks for full access, the ones made later are
++ * refused. The application that plays the video makes it on startup and
++ * gives it to the decoder.
++ */
++extern void* wiliwili_ps5_compute_queue(void) __attribute__((weak));
++
++/**
++ * The compute queue the decoders run on. One for the life of the process: it
++ * has to be made before the application asks for full access, the decoders
++ * made later are refused.
++ */
++static pthread_mutex_t g_queueLock = PTHREAD_MUTEX_INITIALIZER;
++static void*           g_queue     = NULL;
++static Mem             g_queueMem;
++
++static void* computeQueue(void)
++{
++    if (wiliwili_ps5_compute_queue)
++        return wiliwili_ps5_compute_queue();
++
++    pthread_mutex_lock(&g_queueLock);
++    if (!g_queue) {
++        VdecComputeMemory info = {.this_size = sizeof(info)};
++        int rc                = sceVideodec2QueryComputeMemoryInfo(&info);
++        if (rc == 0 && memDirect(&g_queueMem, info.cpu_gpu_memory_size, PAGE_16K,
++                                 PROT_CPU_RW | PROT_GPU_RW) == 0) {
++            info.cpu_gpu_memory      = g_queueMem.addr;
++            info.cpu_gpu_memory_size = g_queueMem.len;
++            VdecComputeConfig config = {.this_size = sizeof(config)};
++            rc                       = sceVideodec2AllocateComputeQueue(&config, &info, &g_queue);
++            if (rc != 0) {
++                g_queue = NULL;
++                memFree(&g_queueMem);
++            }
++        }
++    }
++    void* queue = g_queue;
++    pthread_mutex_unlock(&g_queueLock);
++    return queue;
++}
++
++#define MAX_PENDING 64
++
++/**
++ * The decoder of one stream: the chip's decoder and the memory it works in.
++ */
++typedef struct Ps5Context
++{
++    AVClass* class;
++
++    void* decoder;
++    int    codec;
++    int    profile;
++    int    level;
++    int    tenBit;
++    int    draining;
++    int    failed;
++
++    unsigned frameCount;
++    size_t   frameSize;
++    unsigned nextSlot;
++    unsigned nextAu;
++    unsigned lastSlot;
++    // The slots the chip still holds a picture in: handing one of those out
++    // again is refused.
++    bool     held[32];
++    Mem      frames;
++    Mem      cpu;
++    Mem      gpu;
++    Mem      cpuGpu;
++    Mem      au[AU_SLOTS];
++
++    // The times of the pictures that were sent but have not come out yet.
++    // The chip shows the pictures in the order they are to be seen, so the
++    // smallest time waiting is the picture that comes out.
++    int64_t  pending[MAX_PENDING];
++    int      pendingCount;
++
++    // The parameter sets, in Annex B, in front of every picture.
++    uint8_t* headers;
++    size_t   headersSize;
++
++    // The picture that came out of the chip and is waiting to be handed on.
++    VdecOutput picture;
++    int        hasPicture;
++
++    AVPacket* pkt;
++} Ps5Context;
++
++/**
++ * A picture buffer from the decoder's own store that the chip does not hold
++ * a picture in yet. The chip writes the decoded picture there; without one it
++ * has nowhere to put it, and it refuses the work.
++ */
++static VdecFrameBuffer nextFrameBuffer(Ps5Context* ps5)
++{
++    VdecFrameBuffer fb = {.this_size = sizeof(fb)};
++    if (!ps5->frames.addr || ps5->frameSize == 0)
++        return fb;
++    unsigned slot = ps5->frameCount;
++    for (unsigned i = 0; i < ps5->frameCount; i++) {
++        unsigned index = (ps5->nextSlot + i) % ps5->frameCount;
++        if (!ps5->held[index]) {
++            slot         = index;
++            ps5->nextSlot = index + 1;
++            break;
++        }
++    }
++    if (slot == ps5->frameCount)
++        return fb;
++    ps5->lastSlot            = slot;
++    fb.frame_buffer          = (uint8_t*)ps5->frames.addr + slot * ps5->frameSize;
++    fb.frame_buffer_size     = ps5->frameSize;
++    return fb;
++}
++
++/// The slot the chip took a picture in is free again once it was copied out.
++static void releaseFrameBuffer(Ps5Context* ps5, bool accepted)
++{
++    if (accepted && ps5->lastSlot < ps5->frameCount)
++        ps5->held[ps5->lastSlot] = false;
++}
++
++/// The slot a picture came out of, when it is one of ours.
++static int frameSlotOf(Ps5Context* ps5, const void* buffer)
++{
++    if (!ps5->frames.addr || !buffer)
++        return -1;
++    const uint8_t* base = (const uint8_t*)ps5->frames.addr;
++    if ((const uint8_t*)buffer < base)
++        return -1;
++    size_t offset = (size_t)((const uint8_t*)buffer - base);
++    if (offset % ps5->frameSize)
++        return -1;
++    size_t slot = offset / ps5->frameSize;
++    if (slot >= ps5->frameCount)
++        return -1;
++    return (int)slot;
++}
++
++/**
++ * Starts the chip's decoder for one stream.
++ */
++static int startDecoder(Ps5Context* ps5, int codec, int profile, int level, int width, int height)
++{
++    void* queue = computeQueue();
++    if (!queue)
++        return AVERROR(ENOSYS);
++
++    VdecConfig config = {
++        .this_size                 = sizeof(config),
++        .resource_type             = 1,
++        .codec_type                = codec == VDEC_CODEC_AVC ? VDEC_CODEC_AVC : VDEC_CODEC_HEVC,
++        .profile                   = (uint32_t)profile,
++        .max_level                 = (uint32_t)level,
++        // The video's own size, rounded to 16; 4K when it is not known yet.
++        .max_frame_width           = width ? (int32_t)((width + 15) & ~15) : 3840,
++        .max_frame_height          = height ? (int32_t)((height + 15) & ~15) : 2176,
++        // The decoder's picture store: four frames.
++        .max_dpb_frame_count       = 4,
++        // One picture at a time: the pipeline of several costs memory, and
++        // the console refuses the decoder when it does not fit.
++        .decode_pipeline_depth     = 1,
++        .compute_queue             = queue,
++        .cpu_affinity_mask         = 0x3f,
++        .cpu_thread_priority       = 700,
++        .optimize_progressive_video = true,
++    };
++    ps5->frameCount = 10;
++    ps5->tenBit     = codec != VDEC_CODEC_AVC && profile == 2;
++
++    int bringUp = -1;
++    for (int attempt = 0; attempt < 2; attempt++) {
++        VdecMemory mem = {.this_size = sizeof(mem)};
++        if (sceVideodec2QueryDecoderMemoryInfo(&config, &mem) != 0) {
++            av_log(ps5, AV_LOG_ERROR, "The console's video decoder: memory query failed\n");
++            return AVERROR_EXTERNAL;
++        }
++        size_t alignment = mem.frame_buffer_alignment > PAGE_16K ? mem.frame_buffer_alignment : PAGE_16K;
++        ps5->frameSize  = (mem.max_frame_buffer_size + alignment - 1) & ~(alignment - 1);
++
++        int ok = (!mem.cpu_memory_size || memCpu(&ps5->cpu, mem.cpu_memory_size) == 0) &&
++                 (!mem.gpu_memory_size ||
++                  memDirect(&ps5->gpu, mem.gpu_memory_size, PAGE_16K, PROT_CHIP_POOL) == 0) &&
++                 (!mem.cpu_gpu_memory_size ||
++                  memDirect(&ps5->cpuGpu, mem.cpu_gpu_memory_size, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW) ==
++                      0) &&
++                 memDirect(&ps5->frames, ps5->frameSize * ps5->frameCount, alignment,
++                           PROT_CHIP_POOL) == 0;
++        for (int i = 0; ok && i < AU_SLOTS; i++)
++            ok = memDirect(&ps5->au[i], AU_SLOT_SIZE, PAGE_16K, PROT_CHIP_POOL) == 0;
++        if (ok) {
++            // The memory is new to the chip: a picture it did not decode fully
++            // would show what was there before.
++            if (ps5->cpu.addr)
++                memset(ps5->cpu.addr, 0, ps5->cpu.len);
++            if (ps5->gpu.addr)
++                memset(ps5->gpu.addr, 0, ps5->gpu.len);
++            if (ps5->cpuGpu.addr)
++                memset(ps5->cpuGpu.addr, 0, ps5->cpuGpu.len);
++            if (ps5->tenBit) {
++                uint64_t* words = (uint64_t*)ps5->frames.addr;
++                for (size_t i = 0, n = ps5->frames.len / 8; i < n; i++)
++                    words[i] = 0x0200020002000200ull;
++            } else {
++                memset(ps5->frames.addr, 0x80, ps5->frames.len);
++            }
++            mem.cpu_memory             = ps5->cpu.addr;
++            mem.gpu_memory             = ps5->gpu.addr;
++            mem.cpu_gpu_memory         = ps5->cpuGpu.addr;
++            // The sizes the chip asked for, rounded up as it wants them.
++            mem.gpu_memory_size        = ps5->gpu.len;
++            mem.cpu_gpu_memory_size    = ps5->cpuGpu.len;
++            mem.max_frame_buffer_size  = ps5->frameSize;
++            mem.frame_buffer_alignment = (uint32_t)alignment;
++            void* decoder               = NULL;
++            if (sceVideodec2CreateDecoder(&config, &mem, &decoder) == 0) {
++                // The decoder only starts to work after it has been reset.
++                if (sceVideodec2Reset(decoder) == 0) {
++                    ps5->decoder = decoder;
++                    bringUp     = 0;
++                } else {
++                    sceVideodec2DeleteDecoder(decoder);
++                }
++            }
++        }
++        if (bringUp == 0)
++            break;
++
++        // The memory that was asked for is given back.
++        for (int i = 0; i < AU_SLOTS; i++)
++            memFree(&ps5->au[i]);
++        memFree(&ps5->frames);
++        memFree(&ps5->cpuGpu);
++        memFree(&ps5->gpu);
++        memFree(&ps5->cpu);
++
++        // Small pictures were refused by the memory query while 1080p and 4K
++        // never were: ask for room for 1080p, which still decodes them.
++        if (attempt == 0) {
++            config.max_frame_width  = config.max_frame_width > 1920 ? config.max_frame_width : 1920;
++            config.max_frame_height = config.max_frame_height > 1088 ? config.max_frame_height : 1088;
++            continue;
++        }
++        av_log(ps5, AV_LOG_ERROR, "The console's video decoder: no memory for the decoder\n");
++        return AVERROR(ENOMEM);
++    }
++
++    ps5->codec   = codec;
++    ps5->profile = profile;
++    ps5->level   = level;
++    av_log(ps5, AV_LOG_INFO, "The console's video decoder is ready (%s %dx%d, %u pictures of %zu KiB)\n",
++           codec == VDEC_CODEC_AVC ? "H.264" : "HEVC", config.max_frame_width, config.max_frame_height,
++           ps5->frameCount, ps5->frameSize >> 10);
++    return 0;
++}
++
++static void stopDecoder(Ps5Context* ps5)
++{
++    if (ps5->decoder) {
++        sceVideodec2DeleteDecoder(ps5->decoder);
++        ps5->decoder = NULL;
++    }
++    for (int i = 0; i < AU_SLOTS; i++)
++        memFree(&ps5->au[i]);
++    memFree(&ps5->frames);
++    memFree(&ps5->cpuGpu);
++    memFree(&ps5->gpu);
++    memFree(&ps5->cpu);
++}
++
++/**
++ * The parameter sets of the stream, in Annex B. The chip wants them in
++ * front of every picture.
++ */
++static int readHeaders(Ps5Context* ps5, const uint8_t* data, int size)
++{
++    if (size <= 0)
++        return 0;
++
++    // The bitstream filter leaves the data in Annex B already.
++    av_freep(&ps5->headers);
++    ps5->headers = av_malloc(size);
++    if (!ps5->headers)
++        return AVERROR(ENOMEM);
++    memcpy(ps5->headers, data, size);
++    ps5->headersSize = size;
++    return 0;
++}
++
++/**
++ * The access unit the chip reads: the parameter sets and the packet.
++ */
++static int buildAccessUnit(Ps5Context* ps5, const AVPacket* pkt, uint8_t** out, size_t* outSize)
++{
++    size_t headers = ps5->headersSize;
++    size_t total   = headers + (size_t)pkt->size;
++    if (total > AU_SLOT_SIZE)
++        return AVERROR_INVALIDDATA;
++
++    uint8_t* au = av_malloc(total ? total : 1);
++    if (!au)
++        return AVERROR(ENOMEM);
++    if (headers)
++        memcpy(au, ps5->headers, headers);
++    if (pkt->size)
++        memcpy(au + headers, pkt->data, pkt->size);
++    *out     = au;
++    *outSize = total;
++    return 0;
++}
++
++/**
++ * The time of the picture that comes out: the smallest one that is waiting.
++ */
++static int64_t takePending(Ps5Context* ps5)
++{
++    if (!ps5->pendingCount)
++        return AV_NOPTS_VALUE;
++    int best = 0;
++    for (int i = 1; i < ps5->pendingCount; i++)
++        if (ps5->pending[i] < ps5->pending[best])
++            best = i;
++    int64_t pts = ps5->pending[best];
++    ps5->pending[best] = ps5->pending[--ps5->pendingCount];
++    return pts;
++}
++
++static void addPending(Ps5Context* ps5, int64_t pts)
++{
++    if (ps5->pendingCount >= MAX_PENDING) {
++        memmove(ps5->pending, ps5->pending + 1, (MAX_PENDING - 1) * sizeof(ps5->pending[0]));
++        ps5->pendingCount--;
++    }
++    ps5->pending[ps5->pendingCount++] = pts;
++}
++
++/**
++ * Hands the picture the chip produced to the caller.
++ */
++static int outputPicture(AVCodecContext* avctx, AVFrame* frame, const VdecOutput* out, int64_t pts)
++{
++    Ps5Context* ps5 = avctx->priv_data;
++
++    if (out->is_error_frame || !out->frame_buffer || !out->frame_width || !out->frame_height) {
++        av_log(avctx, AV_LOG_WARNING, "The console's video decoder: the picture is not there\n");
++        return AVERROR_INVALIDDATA;
++    }
++
++    size_t pitch   = out->frame_pitch_in_bytes ? out->frame_pitch_in_bytes : out->frame_width;
++    size_t luma    = pitch * out->frame_height;
++    size_t chroma  = pitch * (out->frame_height / 2);
++    size_t needed  = luma + chroma;
++
++    frame->format      = ps5->tenBit ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
++    frame->width       = out->frame_width;
++    frame->height      = out->frame_height;
++    frame->pts         = pts;
++    frame->color_range = AVCOL_RANGE_MPEG;
++
++    AVBufferRef* buf = av_buffer_alloc(needed);
++    if (!buf)
++        return AVERROR(ENOMEM);
++    frame->buf[0] = buf;
++    frame->data[0] = buf->data;
++    frame->linesize[0] = (int)pitch;
++    frame->data[1]     = buf->data + luma;
++    frame->linesize[1] = (int)pitch;
++
++    memcpy(frame->data[0], out->frame_buffer, luma);
++    memcpy(frame->data[1], (const uint8_t*)out->frame_buffer + luma, chroma);
++    return 0;
++}
++
++/**
++ * Gives one access unit to the chip. The picture it produced, if any, comes
++ * back in out.
++ */
++static int decodeAccessUnit(Ps5Context* ps5, const uint8_t* au, size_t size, int64_t pts,
++                             VdecOutput* out)
++{
++    // The chip reads the access unit from the graphics memory. The slots are
++    // used in turn: the chip reads them before the next call.
++    Mem* slot = &ps5->au[ps5->nextAu % AU_SLOTS];
++    ps5->nextAu++;
++    memcpy(slot->addr, au, size);
++
++    VdecInput in = {
++        .this_size = sizeof(in),
++        .au_data   = slot->addr,
++        .au_size   = size,
++        .pts_data  = (uint64_t)pts,
++        .dts_data  = UINT64_MAX,
++    };
++    VdecFrameBuffer fb = nextFrameBuffer(ps5);
++    memset(out, 0, sizeof(*out));
++    out->this_size = sizeof(*out);
++
++    int rc = 0;
++    PS5_RUN_GUARDED(rc = sceVideodec2Decode(ps5->decoder, &in, &fb, out), rc);
++    if (rc != 0) {
++        releaseFrameBuffer(ps5, fb.is_accepted);
++        return AVERROR_EXTERNAL;
++    }
++    if (fb.is_accepted && ps5->lastSlot < ps5->frameCount)
++        ps5->held[ps5->lastSlot] = true;
++    // The time of the picture waits until the picture comes out.
++    addPending(ps5, pts);
++    return 0;
++}
++
++/**
++ * Takes the pictures that are still inside the chip.
++ */
++static int drainDecoder(Ps5Context* ps5, VdecOutput* out)
++{
++    VdecFrameBuffer fb = nextFrameBuffer(ps5);
++    memset(out, 0, sizeof(*out));
++    out->this_size = sizeof(*out);
++
++    int rc = 0;
++    PS5_RUN_GUARDED(rc = sceVideodec2Flush(ps5->decoder, &fb, out), rc);
++    if (rc != 0) {
++        releaseFrameBuffer(ps5, fb.is_accepted);
++        return AVERROR_EXTERNAL;
++    }
++    if (fb.is_accepted && ps5->lastSlot < ps5->frameCount)
++        ps5->held[ps5->lastSlot] = true;
++    return out->is_valid ? 0 : AVERROR_EOF;
++}
++
++/**
++ * The pictures the chip has ready are handed on one at a time.
++ *
++ * The chip shows the pictures in the order they are to be seen, one access
++ * unit after the other: the picture of an access unit comes out when the
++ * next one is given to the chip. The times of the pictures that were sent
++ * but have not come out yet are kept, and the picture that comes out is given
++ * the smallest of them.
++ */
++static int ps5_receive_frame(AVCodecContext* avctx, AVFrame* frame)
++{
++    Ps5Context* ps5 = avctx->priv_data;
++
++    if (ps5->failed)
++        return AVERROR_EXTERNAL;
++
++    for (;;) {
++        // A picture that came out with the last access unit.
++        if (ps5->hasPicture) {
++            ps5->hasPicture = 0;
++            int64_t pts = takePending(ps5);
++            int    slot = frameSlotOf(ps5, ps5->picture.frame_buffer);
++            int    ret  = outputPicture(avctx, frame, &ps5->picture, pts);
++            if (slot >= 0)
++                ps5->held[slot] = false;
++            if (ret < 0)
++                return ret;
++            return 0;
++        }
++
++        if (!ps5->draining) {
++            // Another access unit for the chip.
++            AVPacket* pkt = ps5->pkt;
++            int       ret = ff_decode_get_packet(avctx, pkt);
++            if (ret == AVERROR_EOF) {
++                ps5->draining = 1;
++                continue;
++            }
++            if (ret < 0)
++                return ret;
++            if (!pkt->size) {
++                av_packet_unref(pkt);
++                continue;
++            }
++
++            uint8_t* au     = NULL;
++            size_t   auSize = 0;
++            ret             = buildAccessUnit(ps5, pkt, &au, &auSize);
++            if (ret < 0) {
++                av_packet_unref(pkt);
++                return ret;
++            }
++            VdecOutput out;
++            ret = decodeAccessUnit(ps5, au, auSize, pkt->pts, &out);
++            av_freep(&au);
++            av_packet_unref(pkt);
++            if (ret < 0) {
++                ps5->failed = 1;
++                return ret;
++            }
++            if (out.is_valid) {
++                ps5->picture    = out;
++                ps5->hasPicture = 1;
++            }
++            continue;
++        }
++
++        // The stream is over: the pictures that are still inside the chip are
++        // taken out.
++        VdecOutput out;
++        int        ret = drainDecoder(ps5, &out);
++        if (ret == AVERROR_EOF)
++            return AVERROR_EOF;
++        if (ret < 0)
++            return ret;
++        ps5->picture    = out;
++        ps5->hasPicture = 1;
++    }
++}
++
++static av_cold int ps5_decode_init(AVCodecContext* avctx)
++{
++    Ps5Context* ps5 = avctx->priv_data;
++
++    ps5->pkt = avctx->internal->in_pkt;
++
++    int codec   = avctx->codec_id == AV_CODEC_ID_HEVC ? VDEC_CODEC_HEVC : VDEC_CODEC_AVC;
++    // The chip counts the levels the way the codecs do. When the stream does
++    // not say, the most ordinary ones are asked for.
++    int profile = avctx->profile ? avctx->profile : (codec == VDEC_CODEC_AVC ? 66 : 1);
++    int level   = avctx->level ? avctx->level : 51;
++    int width   = avctx->width;
++    int height  = avctx->height;
++
++    if (avctx->extradata_size > 0)
++        readHeaders(ps5, avctx->extradata, avctx->extradata_size);
++
++    // The chip's decoder is not made for threads: one thread does the work.
++    avctx->thread_count = 1;
++
++    int ret = startDecoder(ps5, codec, profile, level, width, height);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR, "The console's video decoder did not start\n");
++        return ret;
++    }
++    return 0;
++}
++
++static av_cold int ps5_decode_close(AVCodecContext* avctx)
++{
++    Ps5Context* ps5 = avctx->priv_data;
++    stopDecoder(ps5);
++    av_freep(&ps5->headers);
++    return 0;
++}
++
++/**
++ * The pictures come out as NV12, or as P010 for ten bit.
++ */
++static const enum AVPixelFormat ps5_pix_fmts[] = { AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_NONE };
++
++static int ps5_get_supported_config(const AVCodecContext* avctx, const AVCodec* codec,
++                                     enum AVCodecConfig config, unsigned flags,
++                                     const void** out_configs, int* out_num_configs)
++{
++    if (config == AV_CODEC_CONFIG_PIX_FORMAT) {
++        *out_configs = ps5_pix_fmts;
++        if (out_num_configs)
++            *out_num_configs = 2;
++        return 0;
++    }
++    return ff_default_get_supported_config(avctx, codec, config, flags, out_configs, out_num_configs);
++}
++
++static const AVClass ps5_class = {
++    .class_name = "h264_ps5",
++    .item_name  = av_default_item_name,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
++
++const FFCodec ff_h264_ps5_decoder = {
++    .p.name         = "h264_ps5",
++    .p.long_name    = "PS5 H.264 decoder",
++    .p.type         = AVMEDIA_TYPE_VIDEO,
++    .p.id           = AV_CODEC_ID_H264,
++    .priv_data_size = sizeof(Ps5Context),
++    .p.priv_class   = &ps5_class,
++    .init           = ps5_decode_init,
++    .close          = ps5_decode_close,
++    FF_CODEC_RECEIVE_FRAME_CB(ps5_receive_frame),
++    .get_supported_config = ps5_get_supported_config,
++    .bsfs           = "h264_mp4toannexb",
++    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
++    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_SETS_FRAME_PROPS,
++    .p.wrapper_name = "ps5",
++};
+--- a/libavcodec/ps5.h
++++ b/libavcodec/ps5.h
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVCODEC_PS5_H
++#define AVCODEC_PS5_H
++
++#include "libavcodec/codec.h"
++
++extern const FFCodec ff_h264_ps5_decoder;
++
++#endif /* AVCODEC_PS5_H */

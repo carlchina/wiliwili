@@ -354,12 +354,22 @@ void MPVCore::init() {
     }
 
     // hardware decoding
+#if defined(PS5)
+    // The console has a video chip of its own: the decoder that runs on it
+    // is part of the player, and mpv asks for it by name. The pictures come
+    // out of it as they are decoded.
+    if (HARDWARE_DEC) {
+        mpvSetOptionString(mpv, "vd", PLAYER_HWDEC_METHOD.c_str());
+        brls::Logger::info("MPV video decoder: {}", PLAYER_HWDEC_METHOD);
+    }
+#else
     if (HARDWARE_DEC) {
         mpvSetOptionString(mpv, "hwdec", PLAYER_HWDEC_METHOD.c_str());
         brls::Logger::info("MPV hardware decode: {}", PLAYER_HWDEC_METHOD);
     } else {
         mpvSetOptionString(mpv, "hwdec", "no");
     }
+#endif
 
     // Making the loading process faster
 #if defined(__SWITCH__)

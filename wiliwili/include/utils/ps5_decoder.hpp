@@ -26,6 +26,13 @@ namespace ps5decoder
  */
 extern "C" int wiliwili_ps5_decoder_prepare(void);
 
+/**
+ * The queue the console's hardware video decoder runs on. The decoder the
+ * player uses (the one in FFmpeg) runs on the same queue: the console
+ * refuses a second one.
+ */
+extern "C" void* wiliwili_ps5_compute_queue(void);
+
 enum Codec
 {
     CODEC_NONE = 0,

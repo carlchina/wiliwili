@@ -702,4 +702,9 @@ extern "C" int wiliwili_ps5_decoder_prepare(void)
     return ps5decoder::computeQueue() != nullptr ? 1 : 0;
 }
 
+extern "C" void* wiliwili_ps5_compute_queue(void)
+{
+    return ps5decoder::computeQueue();
+}
+
 #endif  // PS5
