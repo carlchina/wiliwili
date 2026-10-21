@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1355 @@
+@@ -0,0 +1,1524 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -459,6 +459,9 @@
 +    // The pictures that follow a random access point and are not
 +    // decodable on their own are left out.
 +    int    dropLeading;
++    // How far the room and the level have grown: the chip refuses a
++    // picture that does not fit them.
++    int    grown;
 +    // How many access units went in without a picture coming out.
 +    int    silent;
 +
@@ -759,34 +762,166 @@
 +}
 +
 +/**
-+ * The profile of the stream, from its sequence parameter set.
-+ *
-+ * The decoder is asked for the parameters of the stream before a single
-+ * picture is decoded, and the fields of the context are still empty at that
-+ * time: the profile is only in the parameter set.
++ * A bit reader for the parameter sets.
 + */
-+static int streamProfile(int codec, const uint8_t* annexb, int size)
++typedef struct VdecBits
 +{
-+    int hevc   = codec == VDEC_CODEC_HEVC;
-+    int spsType = hevc ? 33 : 7;
++    const uint8_t* data;
++    int size;  // in bits
++    int pos;
++} VdecBits;
 +
-+    const uint8_t* sps = findParameterSet(annexb, size, spsType, hevc);
++static uint32_t bitsGet(VdecBits* bits, int n)
++{
++    uint32_t value = 0;
++    for (int i = 0; i < n; i++) {
++        int byte = bits->pos >> 3;
++        int bit  = 0;
++        if (byte < (bits->size >> 3))
++            bit = (bits->data[byte] >> (7 - (bits->pos & 7))) & 1;
++        value = (value << 1) | (uint32_t)bit;
++        bits->pos++;
++    }
++    return value;
++}
++
++/**
++ * The number of the bits before a zero (the Exp-Golomb code of the
++ * parameter sets).
++ */
++static uint32_t bitsUe(VdecBits* bits)
++{
++    int zeros = 0;
++    while (bitsGet(bits, 1) == 0 && zeros < 32)
++        zeros++;
++    if (!zeros)
++        return 0;
++    uint32_t rest = bitsGet(bits, zeros);
++    return ((1u << zeros) - 1) + rest;
++}
++
++/**
++ * The parameters of the stream that the chip wants: the profile, the level
++ * and the size of the picture.
++ *
++ * They come from the sequence parameter set: the decoder is asked for them
++ * before a single picture is decoded, and the fields of the context are still
++ * empty at that time. The chip counts the level the way the codec does, so
++ * the level of the parameter set is the one it wants - a stream that says 5.0
++ * is refused by a decoder that was told 4.1.
++ *
++ * Returns 1 when the parameter set was read.
++ */
++static int streamParameters(int codec, const uint8_t* annexb, int size, int* profile, int* level, int* width,
++                            int* height)
++{
++    int hevc = codec == VDEC_CODEC_HEVC;
++
++    const uint8_t* sps = findParameterSet(annexb, size, hevc ? 33 : 7, hevc);
 +    if (!sps)
 +        return 0;
 +
-+    // The parameter set begins with the header of the unit: one byte for
-+    // H.264, two for HEVC.
 +    const uint8_t* payload = sps + (hevc ? 2 : 1);
-+    if (hevc) {
-+        // general_profile_space, general_tier_flag, general_profile_idc
-+        if (payload + 2 > annexb + size)
-+            return 0;
-+        return payload[1] & 0x1f;
-+    }
-+    // profile_idc
-+    if (payload + 1 > annexb + size)
++    int           length   = (int)(annexb + size - payload);
++    if (length <= 0)
 +        return 0;
-+    return payload[0];
++
++    if (!hevc) {
++        // H.264: the profile is the first byte of the parameter set and the
++        // level the third.
++        if (length < 3)
++            return 0;
++        *profile = payload[0];
++        *level   = payload[2];
++        return 1;
++    }
++
++    // The bytes that keep a zero from starting a marker are not part of the
++    // parameter set.
++    uint8_t* rbsp = av_malloc((size_t)length);
++    if (!rbsp)
++        return 0;
++    int   out   = 0;
++    int   zeros = 0;
++    for (int i = 0; i < length; i++) {
++        if (zeros >= 2 && payload[i] == 3) {
++            zeros = 0;
++            continue;
++        }
++        rbsp[out++] = payload[i];
++        zeros       = payload[i] == 0 ? zeros + 1 : 0;
++    }
++
++    VdecBits bits = { rbsp, out * 8, 0 };
++    int      ok   = 0;
++
++    bitsGet(&bits, 4);  // the video parameter set it belongs to
++    int subs = (int)bitsGet(&bits, 3);
++    bitsGet(&bits, 1);  // the nesting of the layers
++
++    int profileSpace = (int)bitsGet(&bits, 2);
++    bitsGet(&bits, 1);  // the tier
++    int profileIdc = (int)bitsGet(&bits, 5);
++    int compat[32];
++    for (int i = 0; i < 32; i++)
++        compat[i] = (int)bitsGet(&bits, 1);
++
++    bitsGet(&bits, 4);  // the source flags
++
++    // The extra rules of the profile: each profile has its own.
++    int hasRule = 0;
++    for (int i = 4; i <= 10; i++)
++        hasRule |= (profileIdc == i || compat[i]);
++    if (hasRule) {
++        for (int i = 0; i < 9; i++)
++            bitsGet(&bits, 1);
++        int longRule = (profileIdc == 5 || compat[5] || compat[9] || compat[10]);
++        bitsGet(&bits, longRule ? 33 : 34);
++    } else if (profileIdc == 2 || compat[2]) {
++        bitsGet(&bits, 7);
++        bitsGet(&bits, 1);
++        bitsGet(&bits, 35);
++    } else {
++        bitsGet(&bits, 43);
++    }
++    bitsGet(&bits, 1);  // the building flag
++
++    int levelIdc = (int)bitsGet(&bits, 8);
++
++    if (subs > 1) {
++        int subProfile[8], subLevel[8];
++        for (int i = 0; i < subs - 1; i++) {
++            subProfile[i] = (int)bitsGet(&bits, 1);
++            subLevel[i]   = (int)bitsGet(&bits, 1);
++        }
++        for (int i = subs - 1; i < 8; i++)
++            bitsGet(&bits, 2);
++        for (int i = 0; i < subs - 1; i++) {
++            if (subProfile[i])
++                bitsGet(&bits, 88);
++            if (subLevel[i])
++                bitsGet(&bits, 8);
++        }
++    }
++
++    // The size of the picture: the samples of the luma.
++    bitsUe(&bits);  // the number of the parameter set
++    int chroma = (int)bitsUe(&bits);
++    if (chroma == 3)
++        bitsGet(&bits, 1);
++    int picWidth  = (int)bitsUe(&bits);
++    int picHeight = (int)bitsUe(&bits);
++
++    if (picWidth > 0 && picHeight > 0 && levelIdc > 0) {
++        *profile = profileIdc;
++        *level   = levelIdc;
++        *width   = picWidth;
++        *height  = picHeight;
++        ok = 1;
++    }
++    (void)profileSpace;
++    av_free(rbsp);
++    return ok;
 +}
 +
 +/**
@@ -1068,7 +1203,7 @@
 + * back in out.
 + */
 +static int decodeAccessUnit(Ps5Context* ps5, const uint8_t* au, size_t size, int64_t pts,
-+                             VdecOutput* out)
++                             VdecOutput* out, int* chipRc)
 +{
 +    // The chip reads the access unit from the graphics memory. The slots are
 +    // used in turn: the chip reads them before the next call.
@@ -1103,6 +1238,7 @@
 +    }
 +    if (rc != 0) {
 +        releaseFrameBuffer(ps5, fb.is_accepted);
++        *chipRc = rc;
 +        return AVERROR_EXTERNAL;
 +    }
 +    if (fb.is_accepted && ps5->lastSlot < ps5->frameCount)
@@ -1243,7 +1379,30 @@
 +                return ret;
 +            }
 +            VdecOutput out;
-+            ret = decodeAccessUnit(ps5, au, auSize, pkt->pts, &out);
++            int    chipRc = 0;
++            ret = decodeAccessUnit(ps5, au, auSize, pkt->pts, &out, &chipRc);
++            if (ret < 0 && ps5->grown < 2) {
++                // The chip refuses a picture that does not fit the room it
++                // was given: the room and the level grow, and the picture is
++                // tried again.
++                static const int widths[3]  = { 1920, 2560, 3840 };
++                static const int heights[3] = { 1088, 1440, 2176 };
++                static const int levels[3]  = { 123, 150, 153 };
++                int next = ++ps5->grown;
++                fprintf(stderr,
++                        "[wiliwili] the console's decoder: the picture was refused (0x%08x), the room grows "
++                        "to %dx%d, level %d\n",
++                        (unsigned)chipRc, widths[next], heights[next], levels[next]);
++                stopDecoder(ps5);
++                if (startDecoder(ps5, ps5->codec, ps5->profile, levels[next], widths[next], heights[next]) < 0) {
++                    ps5->failed = 1;
++                    av_freep(&au);
++                    av_packet_unref(pkt);
++                    return AVERROR_EXTERNAL;
++                }
++                out.is_valid = 0;
++                ret = decodeAccessUnit(ps5, au, auSize, pkt->pts, &out, &chipRc);
++            }
 +            av_freep(&au);
 +            av_packet_unref(pkt);
 +            if (ret < 0) {
@@ -1289,9 +1448,7 @@
 +    // is Main and 100 is High for H.264, 1 is Main and 2 is Main 10 for
 +    // HEVC. The stream's own profile is the one the chip wants.
 +    int profile = codec == VDEC_CODEC_HEVC ? 1 : 100;
-+    // The level goes with the size of the picture: H.264 counts by ten and
-+    // HEVC by thirty. 1080p wants 5.1 (H.264) or 4.1 (HEVC), 1440p wants
-+    // 5.0 (HEVC) and 4K wants 5.2 (H.264) or 5.1 (HEVC).
++    // The level and the size of the picture, the way the stream says them.
 +    int level = codec == VDEC_CODEC_HEVC ? 123 : 51;
 +    int width = 1920, height = 1088;
 +    // The bit depth is the stream's own: the chip's profile says nothing
@@ -1310,11 +1467,23 @@
 +    if (extraSize > 0)
 +        readHeaders(ps5, extra, extraSize);
 +
-+    // The profile of the stream is in its parameter set: the fields of the
-+    // context are still empty, because no picture was decoded yet.
-+    int streamProfileValue = streamProfile(codec, extra, extraSize);
-+    if (streamProfileValue > 0)
++    // The profile, the level and the size of the picture are in the parameter
++    // sets of the stream: the fields of the context are still empty, because
++    // no picture was decoded yet. The chip refuses a picture that does not
++    // fit the level it was told about.
++    int streamProfileValue = 0;
++    int streamLevel        = 0;
++    int streamWidth        = 0;
++    int streamHeight       = 0;
++    if (streamParameters(codec, extra, extraSize, &streamProfileValue, &streamLevel, &streamWidth,
++                         &streamHeight)) {
 +        profile = streamProfileValue;
++        level   = streamLevel;
++        // The room the chip gets holds the picture as it is coded: the
++        // encoder rounds the height up to its block, which is up to 64.
++        width  = (streamWidth + 63) & ~63;
++        height = (streamHeight + 63) & ~63;
++    }
 +    if (codec == VDEC_CODEC_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
 +        ps5->tenBit = 1;
 +
@@ -1328,8 +1497,8 @@
 +        // The parameter sets that go in front of every picture: their size
 +        // and their first bytes say whether the stream gave any.
 +        fprintf(stderr, "[wiliwili] the console's decoder: %d bytes of parameter sets:", (int)ps5->headersSize);
-+        for (int i = 0; i < 16 && i < (int)ps5->headersSize; i++)
-+            fprintf(stderr, " %02x", ps5->headers[i]);
++        for (int i = 0; i < (int)ps5->headersSize; i++)
++            fprintf(stderr, "%02x", ps5->headers[i]);
 +        fprintf(stderr, "\n");
 +    }
 +
