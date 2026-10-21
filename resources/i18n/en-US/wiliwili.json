@@ -4,6 +4,7 @@
   "github_release": "https://github.com/xfangfang/wiliwili/releases/latest",
   "setting": {
     "quit_hint": "You are about to exit the application. The settings will take effect after the next startup",
+    "restart_hint": "The settings will take effect the next time the application starts. Close it and start it again.",
     "app": {
       "tab": "App",
       "playback": {

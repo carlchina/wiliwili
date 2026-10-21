@@ -4,6 +4,7 @@
   "github_release": "https://github.com/xfangfang/wiliwili/releases/latest",
   "setting": {
     "quit_hint": "Stai per uscire dall'applicazione. Le impostazioni avranno effetto dopo il prossimo avvio",
+    "restart_hint": "Le impostazioni avranno effetto al prossimo avvio. Chiudi l'applicazione e riavviala.",
     "app": {
       "tab": "App",
       "playback": {
@@ -182,10 +183,10 @@
   },
   "hints": {
     "hint1": "Seleziona un gioco dalla schermata home",
-    "hint2": "Tieni premuto il tasto \uE0E5 e clicca \uE0E0 per entrare in hbmenu",
+    "hint2": "Tieni premuto il tasto  e clicca  per entrare in hbmenu",
     "hint3": "In hbmenu, seleziona wiliwili",
     "hint4": "Opzionale: Usa il forwarder NSP di wiliwili (Posiziona wiliwili.nro in /switch/wiliwili.nro)",
-    "hint_nsp": "Clicca \uE0E0 per installare il forwarder NSP",
+    "hint_nsp": "Clicca  per installare il forwarder NSP",
     "hint_confirm": "L'installazione del forwarder NSP potrebbe risultare in un ban\nConferma nuovamente",
     "hint_right": "Le immagini provengono da Internet, il copyright appartiene a Nintendo Co., Ltd"
   },

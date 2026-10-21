@@ -4,6 +4,7 @@
   "github_release": "https://github.com/xfangfang/wiliwili/releases/latest",
   "setting": {
     "quit_hint": "アプリケーション終了さんでぃそーいびーん。 設定ー次回起動時に有効なやびーん",
+    "restart_hint": "設定ー次回起動時に有効なやびーん。 アプリケーションしめーと、またきいはれーびーん",
     "app": {
       "tab": "アプリ",
       "playback": {

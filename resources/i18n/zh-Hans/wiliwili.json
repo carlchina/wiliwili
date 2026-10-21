@@ -4,6 +4,7 @@
   "github_release": "https://github.com/xfangfang/wiliwili/releases/latest",
   "setting": {
     "quit_hint": "设置的内容将在下次启动后生效",
+    "restart_hint": "设置的内容将在下次启动后生效。请关闭应用并重新启动。",
     "app": {
       "tab": "应用设置",
       "playback": {
