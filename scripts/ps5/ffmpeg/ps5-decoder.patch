@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1536 @@
+@@ -0,0 +1,1552 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -1100,9 +1100,10 @@
 + *
 + * HEVC numbers its units: 0 to 31 are the pictures, 8 and 9 are the ones
 + * that follow a random access point and whose references come before it,
-+ * 16 to 23 are the random access points themselves.
++ * 16 to 23 are the random access points themselves. H.264 uses 1 and 5 for
++ * the slices.
 + */
-+static int accessUnitType(const uint8_t* au, int size)
++static int accessUnitType(const uint8_t* au, int size, int hevc)
 +{
 +    for (int i = 0; i + 4 < size; i++) {
 +        if (au[i] != 0 || au[i + 1] != 0)
@@ -1116,9 +1117,13 @@
 +            continue;
 +        if (payload >= size)
 +            break;
-+        int type = (au[payload] >> 1) & 0x3f;
-+        if (type <= 31)
++        int type = hevc ? ((au[payload] >> 1) & 0x3f) : (au[payload] & 0x1f);
++        if (hevc) {
++            if (type <= 31)
++                return type;
++        } else if (type == 1 || type == 5) {
 +            return type;
++        }
 +        i = payload;
 +    }
 +    return -1;
@@ -1145,7 +1150,7 @@
 +    // bitstream filter and the packet together made can hold the same set
 +    // twice, and the chip refuses such a key picture.
 +    size_t size = total;
-+    if (ps5->codec == VDEC_CODEC_HEVC && total > 0) {
++    if (total > 0) {
 +        uint8_t* clean = av_malloc(total);
 +        if (clean) {
 +            int written = cleanAccessUnit(clean, au, (int)total, 1);
@@ -1368,11 +1373,22 @@
 +            uint8_t* au     = NULL;
 +            size_t   auSize = 0;
 +            ret             = buildAccessUnit(ps5, pkt, &au, &auSize);
++            if (ret == 0) {
++                // A unit that holds no picture - the parameter sets on their
++                // own, as the first packet of a live stream has - is not
++                // something the chip can decode, and it does not like it.
++                int type = accessUnitType(au, (int)auSize, ps5->codec == VDEC_CODEC_HEVC);
++                if (type < 0) {
++                    av_freep(&au);
++                    av_packet_unref(pkt);
++                    continue;
++                }
++            }
 +            if (ret == 0 && ps5->codec == VDEC_CODEC_HEVC && ps5->dropLeading) {
 +                // The pictures that follow a random access point and whose
 +                // references come before it cannot be decoded: the chip is
 +                // given the ones that can.
-+                int type = accessUnitType(au, (int)auSize);
++                int type = accessUnitType(au, (int)auSize, 1);
 +                if (type == 8 || type == 9) {
 +                    av_freep(&au);
 +                    av_packet_unref(pkt);
