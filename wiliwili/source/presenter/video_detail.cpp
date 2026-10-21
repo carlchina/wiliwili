@@ -16,6 +16,7 @@
 #include "bilibili/result/mine_collection_result.h"
 #include "view/video_snapshot_core.hpp"
 
+#if defined(PS5)
 namespace
 {
 
@@ -107,6 +108,7 @@ void parseDanmakuXml(const std::string& xml, std::vector<DanmakuItem>& items) {
 }
 
 }  // namespace
+#endif /* PS5 */
 
 /// 请求视频数据
 void VideoDetail::requestData(const bilibili::VideoDetailResult& video) { this->requestVideoInfo(video.bvid); }
@@ -575,11 +577,38 @@ void VideoDetail::requestVideoDanmaku(uint64_t cid) {
             ASYNC_RELEASE
             brls::Logger::debug("DANMAKU: start decode");
 
+            std::vector<DanmakuItem> items;
+#if defined(PS5)
             // The comments are read as a stream: the document of a video with
             // many comments is tens of megabytes, and a tree of it does not
             // fit in the console's memory.
-            std::vector<DanmakuItem> items;
             parseDanmakuXml(result, items);
+#else
+            // Load XML
+            tinyxml2::XMLDocument document = tinyxml2::XMLDocument();
+            tinyxml2::XMLError error       = document.Parse(result.c_str());
+
+            if (error != tinyxml2::XMLError::XML_SUCCESS) {
+                brls::Logger::error("Error decode danmaku xml[1]: {}", std::to_string(error));
+                return;
+            }
+            tinyxml2::XMLElement* element = document.RootElement();
+            if (!element) {
+                brls::Logger::error("Error decode danmaku xml[2]: no root element");
+                return;
+            }
+
+            for (auto child = element->FirstChildElement(); child != nullptr; child = child->NextSiblingElement()) {
+                if (child->Name()[0] != 'd') continue;  // 简易判断是不是弹幕
+                const char* content = child->GetText();
+                if (!content) continue;
+                try {
+                    items.emplace_back(content, child->Attribute("p"));
+                } catch (...) {
+                    brls::Logger::error("DANMAKU: error decode: {}", child->GetText());
+                }
+            }
+#endif /* PS5 */
 
             brls::sync([items]() { DanmakuCore::instance().loadDanmakuData(items); });
 
