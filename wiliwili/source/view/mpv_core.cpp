@@ -8,6 +8,7 @@
 #include <pystring.h>
 #include <borealis/core/thread.hpp>
 #include <borealis/core/application.hpp>
+#include <borealis/core/time.hpp>
 
 #include "utils/config_helper.hpp"
 #include "utils/number_helper.hpp"
@@ -218,7 +219,23 @@ void MPVCore::on_update(void *self) {
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
             mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
 #else
+#ifdef PS5
+            // The cost of putting the picture on the screen: the picture goes
+            // through a software OpenGL, and this is where the time goes.
+            static double mpvRenderMs = 0;
+            static double mpvRenderAt = 0;
+            double start = getCPUTimeUsec() / 1000.0;
+#endif
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
+#ifdef PS5
+            mpvRenderMs += getCPUTimeUsec() / 1000.0 - start;
+            double now = getCPUTimeUsec() / 1000.0;
+            if (now - mpvRenderAt > 1000.0) {
+                brls::Logger::info("mpv render: {:.1f} ms a second", mpvRenderMs);
+                mpvRenderMs = 0;
+                mpvRenderAt = now;
+            }
+#endif
 #ifdef BOREALIS_USE_OPENGL
             glBindFramebuffer(GL_FRAMEBUFFER, MPVCore::instance().default_framebuffer);
             glViewport(0, 0, (GLsizei)brls::Application::windowWidth, (GLsizei)brls::Application::windowHeight);
@@ -400,6 +417,13 @@ void MPVCore::init() {
 #elif defined(PS4)
     mpvSetOptionString(mpv, "vd-lavc-threads", "6");
 #elif defined(PS5)
+    // The picture goes through a software OpenGL on this console, and the
+    // scaling of a 4K video on the processor is the slowest part of playing
+    // it: the graphics part of the console scales the picture instead. The
+    // quality is the same - mp's own default for the processor is the
+    // bilinear filter as well.
+    mpvSetOptionString(mpv, "scale", "bilinear");
+    mpvSetOptionString(mpv, "dscale", "bilinear");
     // The title gets a limited memory pool on the console, and the kernel
     // starts refusing allocations once it is used up. mpv's default network
     // cache alone is 150 MiB, which does not fit next to the decoder and the

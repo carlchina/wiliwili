@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1456 @@
+@@ -0,0 +1,1472 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -78,6 +78,7 @@
 +#include "libavutil/mem.h"
 +#include "libavutil/pixfmt.h"
 +#include "libavutil/log.h"
++#include "libavutil/time.h"
 +
 +#include "libavcodec/avcodec.h"
 +#include "libavcodec/bsf.h"
@@ -1154,8 +1155,23 @@
 +    frame->data[1]     = buf->data + luma;
 +    frame->linesize[1] = (int)pitch;
 +
++    // The picture comes out of the graphics memory: the copy back to the
++    // processor is worth knowing about on a 4K video.
++    int64_t start = av_gettime_relative();
 +    memcpy(frame->data[0], out->frame_buffer, luma);
 +    memcpy(frame->data[1], (const uint8_t*)out->frame_buffer + luma, chroma);
++    {
++        static double copyMs = 0;
++        static double copyAt = 0;
++        copyMs += (av_gettime_relative() - start) / 1000.0;
++        double now = av_gettime_relative() / 1000.0;
++        if (now - copyAt > 1000.0) {
++            fprintf(stderr, "[wiliwili] the console's decoder: %.1f ms a second copying the pictures back\n",
++                    copyMs);
++            copyMs = 0;
++            copyAt = now;
++        }
++    }
 +    return 0;
 +}
 +
