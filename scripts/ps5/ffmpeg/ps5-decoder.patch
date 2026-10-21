@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1189 @@
+@@ -0,0 +1,1355 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -456,6 +456,9 @@
 +    int    roomLevel;
 +    // Whether the first picture has been looked at.
 +    int    measured;
++    // The pictures that follow a random access point and are not
++    // decodable on their own are left out.
++    int    dropLeading;
 +    // How many access units went in without a picture coming out.
 +    int    silent;
 +
@@ -556,14 +559,16 @@
 +        .codec_type                = codec == VDEC_CODEC_AVC ? VDEC_CODEC_AVC : VDEC_CODEC_HEVC,
 +        .profile                   = (uint32_t)profile,
 +        .max_level                 = (uint32_t)level,
-+        // The video's own size, rounded to 16; 4K when it is not known yet.
-+        .max_frame_width           = width ? (int32_t)((width + 15) & ~15) : 3840,
-+        .max_frame_height          = height ? (int32_t)((height + 15) & ~15) : 2176,
-+        // The decoder's picture store: four frames.
-+        .max_dpb_frame_count       = 4,
-+        // One picture at a time: the pipeline of several costs memory, and
-+        // the console refuses the decoder when it does not fit.
-+        .decode_pipeline_depth     = 1,
++        // The size of the picture, rounded to the block the encoder codes
++        // with: it may be up to 64, and a room that is a little too small
++        // makes the chip refuse every picture.
++        .max_frame_width           = width ? (int32_t)((width + 63) & ~63) : 3840,
++        .max_frame_height          = height ? (int32_t)((height + 63) & ~63) : 2176,
++        // The decoder's picture store: the decoder sizes it itself.
++        .max_dpb_frame_count       = -1,
++        // Four pictures in flight: the pipeline of one costs throughput, and
++        // the console refuses the decoder when the memory does not fit.
++        .decode_pipeline_depth     = 4,
 +        .compute_queue             = queue,
 +        .cpu_affinity_mask         = 0x3f,
 +        .cpu_thread_priority       = 700,
@@ -663,10 +668,10 @@
 +            continue;
 +        }
 +        if (attempt == 1) {
-+            // The picture store left to the decoder itself, and more pictures
-+            // in the decoder at once: the values the VLC for PS5 port uses.
-+            config.max_dpb_frame_count   = -1;
-+            config.decode_pipeline_depth = 4;
++            // Four pictures in the store and one at a time: the values that
++            // need the least memory.
++            config.max_dpb_frame_count   = 4;
++            config.decode_pipeline_depth = 1;
 +            continue;
 +        }
 +        av_log(ps5, AV_LOG_ERROR, "The console's video decoder: no memory for the decoder\n");
@@ -676,6 +681,7 @@
 +    ps5->codec        = codec;
 +    ps5->profile      = profile;
 +    ps5->level        = level;
++    ps5->dropLeading  = 1;
 +    ps5->roomWidth    = config.max_frame_width;
 +    ps5->roomHeight   = config.max_frame_height;
 +    ps5->roomLevel    = (int)config.max_level;
@@ -831,6 +837,133 @@
 +}
 +
 +/**
++ * The units of an access unit, and the ones the chip is given.
++ *
++ * The chip refuses a key picture whose unit holds the same parameter set
++ * twice: the bitstream filter puts the container's sets in front of every key
++ * picture, and the stream carries its own in band, so the same set is in the
++ * unit twice - and the key picture is refused, and with it every picture that
++ * comes after it. The copy that is nearest the picture is the one the stream
++ * means, so the earlier one is left out.
++ *
++ * The units of type 48 and up are left out as well: they are the extension
++ * layers (Dolby Vision among them), and the console reads the base layer only.
++ *
++ * Returns the number of bytes written, or -1 when the unit is not in Annex B
++ * (the caller then hands it over as it is).
++ */
++#define VDEC_MAX_UNITS 512
++
++static int cleanAccessUnit(uint8_t* dst, const uint8_t* au, int size, int hevc)
++{
++    int startAt[VDEC_MAX_UNITS];
++    int unitAt[VDEC_MAX_UNITS];
++    int endAt[VDEC_MAX_UNITS];
++    int count = 0;
++
++    // The units of the parameter sets, by type: HEVC 32/33/34, H.264 7/8.
++    int first = -1;
++    for (int i = 0; i + 3 <= size; i++) {
++        if (au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1) {
++            first = (i > 0 && au[i - 1] == 0) ? i - 1 : i;
++            break;
++        }
++    }
++    if (first < 0)
++        return -1;
++
++    int sc = first;
++    int unit = first + 3;
++    while (unit < size && count < VDEC_MAX_UNITS) {
++        int nextSc = size;
++        int nextUnit = -1;
++        for (int j = unit; j + 3 <= size; j++) {
++            if (au[j] == 0 && au[j + 1] == 0 && au[j + 2] == 1) {
++                nextSc   = (j > unit && au[j - 1] == 0) ? j - 1 : j;
++                nextUnit = j + 3;
++                break;
++            }
++        }
++        startAt[count] = sc;
++        unitAt[count]  = unit;
++        endAt[count]   = nextSc;
++        count++;
++        if (nextUnit < 0)
++            break;
++        sc   = nextSc;
++        unit = nextUnit;
++    }
++    if (count == VDEC_MAX_UNITS && unit < size) {
++        // Too many units to look at: the unit goes over as it is.
++        return -1;
++    }
++
++    int out = 0;
++    for (int k = 0; k < count; k++) {
++        const uint8_t* header = au + unitAt[k];
++        int type = hevc ? ((header[0] >> 1) & 0x3f) : (header[0] & 0x1f);
++        if (hevc && type >= 48)
++            continue;
++        if (!hevc && (type == 7 || type == 8)) {
++            // The same set again further down the unit: the copy nearest the
++            // picture is the one that counts.
++            int later = 0;
++            for (int m = k + 1; m < count && !later; m++) {
++                const uint8_t* other = au + unitAt[m];
++                int otherType = other[0] & 0x1f;
++                later = otherType == type && (int)(endAt[m] - unitAt[m]) == (int)(endAt[k] - unitAt[k]) &&
++                        !memcmp(au + unitAt[k], au + unitAt[m], (size_t)(endAt[k] - unitAt[k]));
++            }
++            if (later)
++                continue;
++        } else if (hevc && (type == 32 || type == 33 || type == 34)) {
++            int later = 0;
++            for (int m = k + 1; m < count && !later; m++) {
++                const uint8_t* other = au + unitAt[m];
++                int otherType = (other[0] >> 1) & 0x3f;
++                later = otherType == type && (int)(endAt[m] - unitAt[m]) == (int)(endAt[k] - unitAt[k]) &&
++                        !memcmp(au + unitAt[k], au + unitAt[m], (size_t)(endAt[k] - unitAt[k]));
++            }
++            if (later)
++                continue;
++        }
++        memcpy(dst + out, au + startAt[k], (size_t)(endAt[k] - startAt[k]));
++        out += endAt[k] - startAt[k];
++    }
++    return out;
++}
++
++/**
++ * The kind of the first picture of an access unit: the type of its first
++ * slice unit, or -1 when it has none.
++ *
++ * HEVC numbers its units: 0 to 31 are the pictures, 8 and 9 are the ones
++ * that follow a random access point and whose references come before it,
++ * 16 to 23 are the random access points themselves.
++ */
++static int accessUnitType(const uint8_t* au, int size)
++{
++    for (int i = 0; i + 4 < size; i++) {
++        if (au[i] != 0 || au[i + 1] != 0)
++            continue;
++        int payload;
++        if (au[i + 2] == 1)
++            payload = i + 3;
++        else if (au[i + 2] == 0 && au[i + 3] == 1)
++            payload = i + 4;
++        else
++            continue;
++        if (payload >= size)
++            break;
++        int type = (au[payload] >> 1) & 0x3f;
++        if (type <= 31)
++            return type;
++        i = payload;
++    }
++    return -1;
++}
++
++/**
 + * The access unit the chip reads: the parameter sets and the packet.
 + */
 +static int buildAccessUnit(Ps5Context* ps5, const AVPacket* pkt, uint8_t** out, size_t* outSize){
@@ -846,8 +979,25 @@
 +        memcpy(au, ps5->headers, headers);
 +    if (pkt->size)
 +        memcpy(au + headers, pkt->data, pkt->size);
++
++    // The chip wants one copy of every parameter set: the unit that the
++    // bitstream filter and the packet together made can hold the same set
++    // twice, and the chip refuses such a key picture.
++    size_t size = total;
++    if (ps5->codec == VDEC_CODEC_HEVC && total > 0) {
++        uint8_t* clean = av_malloc(total);
++        if (clean) {
++            int written = cleanAccessUnit(clean, au, (int)total, 1);
++            if (written > 0) {
++                memcpy(au, clean, (size_t)written);
++                size = (size_t)written;
++            }
++            av_free(clean);
++        }
++    }
++
 +    *out     = au;
-+    *outSize = total;
++    *outSize = size;
 +    return 0;
 +}
 +
@@ -980,8 +1130,11 @@
 +    if (fb.is_accepted && ps5->lastSlot < ps5->frameCount)
 +        ps5->held[ps5->lastSlot] = true;
 +    // The pictures that were in the chip are gone: the times that waited for
-+    // them are of no use, and the slots they held are free again.
++    // them are of no use, and the slots they held are free again. The player
++    // seeks, and the pictures after the seek may be of the kind that cannot
++    // be decoded on their own.
 +    ps5->pendingCount = 0;
++    ps5->dropLeading  = 1;
 +    memset(ps5->held, 0, sizeof(ps5->held));
 +    return out->is_valid ? 0 : AVERROR_EOF;
 +}
@@ -1072,6 +1225,19 @@
 +            uint8_t* au     = NULL;
 +            size_t   auSize = 0;
 +            ret             = buildAccessUnit(ps5, pkt, &au, &auSize);
++            if (ret == 0 && ps5->codec == VDEC_CODEC_HEVC && ps5->dropLeading) {
++                // The pictures that follow a random access point and whose
++                // references come before it cannot be decoded: the chip is
++                // given the ones that can.
++                int type = accessUnitType(au, (int)auSize);
++                if (type == 8 || type == 9) {
++                    av_freep(&au);
++                    av_packet_unref(pkt);
++                    continue;
++                }
++                if (type >= 0 && type <= 5)
++                    ps5->dropLeading = 0;
++            }
 +            if (ret < 0) {
 +                av_packet_unref(pkt);
 +                return ret;
