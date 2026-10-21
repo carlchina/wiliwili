@@ -205,23 +205,44 @@ static inline void freeImageData(uint8_t* imageData, bool isWebp) {
         stbi_image_free(imageData);
 }
 
+/**
+ * The session of the thread that downloads the pictures.
+ *
+ * It keeps its connection to the server: a new connection costs a handshake,
+ * and closing one waits for the server to say goodbye, which it never does.
+ * That wait is longer than the download itself, and it holds the thread that
+ * does it: the pictures came two or three at a time because of it.
+ */
+static cpr::Session& imageWorkerSession() {
+    // The session is kept for the life of the thread and is never given
+    // back: closing its connection waits for the server to say goodbye,
+    // which it never does, and that wait would hold the thread.
+    static thread_local cpr::Session* session = new cpr::Session();
+    static thread_local bool ready = false;
+    if (!ready) {
+        cpr::Session& s       = *session;
+        CURL* curl = s.GetCurlHolder()->handle;
+        curl_easy_setopt(curl, CURLOPT_SHARE, ImageThreadPool::instance().getShare());
+        curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, bilibili::HTTP::DNS_CACHE_TIMEOUT);
+#ifdef PS5
+        bilibili::HTTP::applySocketOptions(curl);
+#endif
+        s.SetTimeout(cpr::Timeout{bilibili::HTTP::TIMEOUT});
+        s.SetConnectTimeout(cpr::ConnectTimeout{bilibili::HTTP::CONNECTION_TIMEOUT});
+        s.SetVerifySsl(bilibili::HTTP::VERIFY);
+        s.SetProxies(bilibili::HTTP::PROXIES);
+        ready = true;
+    }
+    return *session;
+}
+
 void ImageHelper::requestImage() {
     brls::Logger::verbose("request Image 2: {} {}", this->imageUrl, this->isCancel);
 
     // 请求图片
     cpr::Response r;
     {
-        cpr::Session session;
-        CURL* curl = session.GetCurlHolder()->handle;
-        curl_easy_setopt(curl, CURLOPT_SHARE, ImageThreadPool::instance().getShare());
-        curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, bilibili::HTTP::DNS_CACHE_TIMEOUT);
-#ifdef PS5
-        bilibili::HTTP::applySocketOptions(curl);
-#endif
-        session.SetTimeout(cpr::Timeout{bilibili::HTTP::TIMEOUT});
-        session.SetConnectTimeout(cpr::ConnectTimeout{bilibili::HTTP::CONNECTION_TIMEOUT});
-        session.SetVerifySsl(bilibili::HTTP::VERIFY);
-        session.SetProxies(bilibili::HTTP::PROXIES);
+        cpr::Session& session = imageWorkerSession();
         session.SetUrl(cpr::Url{this->imageUrl});
         session.SetProgressCallback(cpr::ProgressCallback([this](...) -> bool { return !this->isCancel; }));
         r = session.Get();

@@ -106,63 +106,89 @@ public:
     }
 #endif
 
-    static std::shared_ptr<cpr::Session> createSession() {
-        auto session = std::make_shared<cpr::Session>();
-        CURL* curl = session->GetCurlHolder()->handle;
+    static void configureSession(cpr::Session& session) {
+        CURL* curl = session.GetCurlHolder()->handle;
         curl_easy_setopt(curl, CURLOPT_SHARE, HTTP::CURL_SHARE.getShare());
         curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, HTTP::DNS_CACHE_TIMEOUT);
 #ifdef PS5
         HTTP::applySocketOptions(curl);
 #endif
-        session->SetTimeout(cpr::Timeout{bilibili::HTTP::TIMEOUT});
-        session->SetConnectTimeout(cpr::ConnectTimeout{bilibili::HTTP::CONNECTION_TIMEOUT});
-        session->SetHeader(bilibili::HTTP::HEADERS);
-        session->SetProxies(bilibili::HTTP::PROXIES);
-        session->SetVerifySsl(bilibili::HTTP::VERIFY);
+        session.SetTimeout(cpr::Timeout{bilibili::HTTP::TIMEOUT});
+        session.SetConnectTimeout(cpr::ConnectTimeout{bilibili::HTTP::CONNECTION_TIMEOUT});
+        session.SetHeader(bilibili::HTTP::HEADERS);
+        session.SetProxies(bilibili::HTTP::PROXIES);
+        session.SetVerifySsl(bilibili::HTTP::VERIFY);
+    }
+
+    static std::shared_ptr<cpr::Session> createSession() {
+        auto session = std::make_shared<cpr::Session>();
+        configureSession(*session);
         return session;
+    }
+
+    /**
+     * The session of the thread that makes the request.
+     *
+     * A session keeps its connection to the server. A new connection costs a
+     * handshake, and closing one waits for the server to say goodbye, which
+     * it never does: that wait is longer than the request itself. The
+     * session belongs to the thread that makes the request, so that no two
+     * threads use it at once.
+     */
+    static cpr::Session& workerSession() {
+        // The session is kept for the life of the thread and is never given
+        // back: closing its connection waits for the server to say goodbye,
+        // which it never does, and that wait would hold the thread.
+        static thread_local cpr::Session* session = new cpr::Session();
+        static thread_local bool           ready   = false;
+        if (!ready) {
+            configureSession(*session);
+            ready = true;
+        }
+        return *session;
     }
 
     static void _cpr_post(const std::string& url, const cpr::Parameters& parameters = {},
                            const cpr::Payload& payload                               = {},
                            const std::function<void(const cpr::Response&)>& callback = nullptr,
                            const ErrorCallback& error                                = nullptr) {
-        auto session = createSession();;
-        session->SetUrl(cpr::Url{parseLink(url)});
-        session->SetParameters(parameters);
-        session->SetPayload(payload);
+        cpr::async([url, parameters, payload, callback, error]() {
+            cpr::Session& session = workerSession();
+            session.SetUrl(cpr::Url{parseLink(url)});
+            session.SetParameters(parameters);
+            session.SetPayload(payload);
 
-        session->PostCallback(
-            [callback, error](const cpr::Response& r) {
-                if (r.error) {
-                    ERROR_MSG(r.error.message, -1);
-                    return;
-                } else if (r.status_code != 200) {
-                    ERROR_MSG("Network error. [Status code: " + std::to_string(r.status_code) + " ]", r.status_code);
-                    return;
-                }
-                callback(r);
-            });
+            const cpr::Response& r = session.Post();
+            if (r.error) {
+                ERROR_MSG(r.error.message, -1);
+                return;
+            } else if (r.status_code != 200) {
+                ERROR_MSG("Network error. [Status code: " + std::to_string(r.status_code) + " ]", r.status_code);
+                return;
+            }
+            callback(r);
+        });
     }
 
     static void _cpr_get(const std::string& url, const cpr::Parameters& parameters = {},
                           const std::function<void(const cpr::Response&)>& callback = nullptr,
                           const ErrorCallback& error                                = nullptr) {
-        auto session = createSession();;
-        session->SetUrl(cpr::Url{parseLink(url)});
-        session->SetParameters(parameters);
+        cpr::async([url, parameters, callback, error]() {
+            cpr::Session& session = workerSession();
+            session.SetUrl(cpr::Url{parseLink(url)});
+            session.SetParameters(parameters);
 
-        session->GetCallback(
-            [callback, error](const cpr::Response& r) {
-                if (r.error) {
-                    ERROR_MSG(r.error.message, -1);
-                    return;
-                }
-                if (r.status_code != 200) {
-                    ERROR_MSG("Network error. [Status code: " + std::to_string(r.status_code) + " ]", r.status_code);
-                    return;
-                }
-                callback(r);
-            });
+            const cpr::Response& r = session.Get();
+            if (r.error) {
+                ERROR_MSG(r.error.message, -1);
+                return;
+            }
+            if (r.status_code != 200) {
+                ERROR_MSG("Network error. [Status code: " + std::to_string(r.status_code) + " ]", r.status_code);
+                return;
+            }
+            callback(r);
+        });
     }
 
     template <typename ReturnType>
