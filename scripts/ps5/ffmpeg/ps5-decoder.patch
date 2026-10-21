@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1185 @@
+@@ -0,0 +1,1189 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -979,6 +979,10 @@
 +    }
 +    if (fb.is_accepted && ps5->lastSlot < ps5->frameCount)
 +        ps5->held[ps5->lastSlot] = true;
++    // The pictures that were in the chip are gone: the times that waited for
++    // them are of no use, and the slots they held are free again.
++    ps5->pendingCount = 0;
++    memset(ps5->held, 0, sizeof(ps5->held));
 +    return out->is_valid ? 0 : AVERROR_EOF;
 +}
 +
