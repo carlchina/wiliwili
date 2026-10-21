@@ -563,6 +563,13 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         ok = bringUp(&config);
     }
     if (!ok) {
+        // The picture store left to the decoder itself, and more pictures in
+        // the decoder at once: the values the VLC for PS5 port uses.
+        config.max_dpb_frame_count   = -1;
+        config.decode_pipeline_depth = 4;
+        ok = bringUp(&config);
+    }
+    if (!ok) {
         delete impl;
         return false;
     }

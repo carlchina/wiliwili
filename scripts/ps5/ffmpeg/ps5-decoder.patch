@@ -29,7 +29,7 @@
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,957 @@
+@@ -0,0 +1,960 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -564,7 +564,7 @@
 +    ps5->frameCount = 10;
 +
 +    int bringUp = -1;
-+    for (int attempt = 0; attempt < 2; attempt++) {
++    for (int attempt = 0; attempt < 3; attempt++) {
 +        VdecMemory mem = {.this_size = sizeof(mem)};
 +        if (sceVideodec2QueryDecoderMemoryInfo(&config, &mem) != 0) {
 +            av_log(ps5, AV_LOG_ERROR, "The console's video decoder: memory query failed\n");
@@ -632,8 +632,17 @@
 +        // Small pictures were refused by the memory query while 1080p and 4K
 +        // never were: ask for room for 1080p, which still decodes them.
 +        if (attempt == 0) {
++            // Small pictures were refused by the memory query while 1080p and
++            // 4K never were: ask for room for 1080p, which still decodes them.
 +            config.max_frame_width  = config.max_frame_width > 1920 ? config.max_frame_width : 1920;
 +            config.max_frame_height = config.max_frame_height > 1088 ? config.max_frame_height : 1088;
++            continue;
++        }
++        if (attempt == 1) {
++            // The picture store left to the decoder itself, and more pictures
++            // in the decoder at once: the values the VLC for PS5 port uses.
++            config.max_dpb_frame_count   = -1;
++            config.decode_pipeline_depth = 4;
 +            continue;
 +        }
 +        av_log(ps5, AV_LOG_ERROR, "The console's video decoder: no memory for the decoder\n");
@@ -946,21 +955,13 @@
 +
 +/**
 + * The pictures come out as NV12, or as P010 for ten bit.
++ *
++ * The field that says this is the one the framework reads when a decoder
++ * does not answer for itself. The framework writes to it when it does have
++ * an answer, and the field lies in the read only part of the image, so the
++ * decoder must not have one.
 + */
 +static const enum AVPixelFormat ps5_pix_fmts[] = { AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_NONE };
-+
-+static int ps5_get_supported_config(const AVCodecContext* avctx, const AVCodec* codec,
-+                                     enum AVCodecConfig config, unsigned flags,
-+                                     const void** out_configs, int* out_num_configs)
-+{
-+    if (config == AV_CODEC_CONFIG_PIX_FORMAT) {
-+        *out_configs = ps5_pix_fmts;
-+        if (out_num_configs)
-+            *out_num_configs = 2;
-+        return 0;
-+    }
-+    return ff_default_get_supported_config(avctx, codec, config, flags, out_configs, out_num_configs);
-+}
 +
 +#define PS5_DECODER(dec_id, dec_name, dec_long_name, dec_bsf)                              \
 +    static const AVClass dec_name##_class = {                                           \
@@ -970,19 +971,21 @@
 +    };                                                                                   \
 +    const FFCodec ff_##dec_name##_decoder = {                                            \
 +        .p.name         = #dec_name,                                                     \
++        FF_DISABLE_DEPRECATION_WARNINGS                                                  \
 +        .p.long_name    = dec_long_name,                                                 \
 +        .p.type         = AVMEDIA_TYPE_VIDEO,                                            \
 +        .p.id           = dec_id,                                                        \
++        .p.pix_fmts     = ps5_pix_fmts,                                                  \
 +        .priv_data_size = sizeof(Ps5Context),                                            \
 +        .p.priv_class   = &dec_name##_class,                                             \
 +        .init           = ps5_decode_init,                                               \
 +        .close          = ps5_decode_close,                                              \
 +        FF_CODEC_RECEIVE_FRAME_CB(ps5_receive_frame),                                    \
-+        .get_supported_config = ps5_get_supported_config,                                \
 +        .bsfs           = dec_bsf,                                                       \
 +        .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,               \
 +        .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_SETS_FRAME_PROPS, \
 +        .p.wrapper_name = "ps5",                                                         \
++        FF_ENABLE_DEPRECATION_WARNINGS                                                   \
 +    }
 +
 +PS5_DECODER(AV_CODEC_ID_H264, h264_ps5, "PS5 H.264 decoder", "h264_mp4toannexb");

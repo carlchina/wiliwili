@@ -123,15 +123,14 @@ void runTest(const char* name, const unsigned char* data, unsigned int size, Cod
 
     for (const std::vector<Nal>& picture : pictures) {
         accessUnit.clear();
-        if (sent == 0) {
-            // The parameter sets go in front of the first picture.
-            for (const Nal& header : headers) {
-                accessUnit.push_back(0);
-                accessUnit.push_back(0);
-                accessUnit.push_back(0);
-                accessUnit.push_back(1);
-                accessUnit.insert(accessUnit.end(), header.data, header.data + header.size);
-            }
+        // The parameter sets go in front of every picture: the chip wants
+        // them with the slice they belong to.
+        for (const Nal& header : headers) {
+            accessUnit.push_back(0);
+            accessUnit.push_back(0);
+            accessUnit.push_back(0);
+            accessUnit.push_back(1);
+            accessUnit.insert(accessUnit.end(), header.data, header.data + header.size);
         }
         for (const Nal& nal : picture) {
             accessUnit.push_back(0);
