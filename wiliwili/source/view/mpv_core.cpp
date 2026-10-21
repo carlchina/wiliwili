@@ -91,11 +91,12 @@ const char *fragmentShaderSource = SHADER_VERSION SHADER_PRECISION
 
 #define CONCATENATE3(s1, s2, s3) s1##s2##s3
 #define CONCATENATE2(s1, s2) s1##s2
-#define checkGLError(type, id)                                                 \
+// The status a shader and a program are asked about is not the same one.
+#define checkGLError(type, id, status)                                         \
     {                                                                          \
         char *info = nullptr;                                                  \
         int length = 0;                                                        \
-        CONCATENATE3(glGet, type, iv)(id, GL_COMPILE_STATUS, &length);         \
+        CONCATENATE3(glGet, type, iv)(id, status, &length);                    \
         if (length > 0) {                                                      \
             info = (char *)malloc(length);                                     \
             if (info) {                                                        \
@@ -123,7 +124,7 @@ static GLuint createShader(GLint type, const char *source) {
     // check for shader compile errors
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        checkGLError(Shader, shader);
+        checkGLError(Shader, shader, GL_COMPILE_STATUS);
         return 0;
     }
 #endif
@@ -140,7 +141,7 @@ static GLuint linkProgram(GLuint s1, GLuint s2) {
     // check for linking errors
     glGetProgramiv(program, GL_LINK_STATUS, &success);
     if (!success) {
-        checkGLError(Program, program);
+        checkGLError(Program, program, GL_LINK_STATUS);
         return 0;
     }
     return program;
@@ -223,6 +224,24 @@ void MPVCore::on_update(void *self) {
             glViewport(0, 0, (GLsizei)brls::Application::windowWidth, (GLsizei)brls::Application::windowHeight);
 #endif
             mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
+#ifdef PS5
+            // The console's player keeps the picture in a texture of its own
+            // and shows it later. A look at that texture tells whether the
+            // frames arrive at all.
+            static int probe = 0;
+            if (++probe >= 30) {
+                probe = 0;
+                GLint width = 0, height = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, MPVCore::instance().media_texture, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, MPVCore::instance().media_texture, 0, GL_TEXTURE_HEIGHT, &height);
+                unsigned char pixel[4] = {0, 0, 0, 0};
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, MPVCore::instance().media_framebuffer);
+                glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                brls::Logger::info("ps5 video: texture {}x{}, framebuffer {}, pixel {},{},{},{}", width, height,
+                                    MPVCore::instance().media_framebuffer, pixel[0], pixel[1], pixel[2], pixel[3]);
+            }
+#endif
 #endif
         }
 #endif
@@ -889,7 +908,12 @@ void MPVCore::draw(brls::Rect area, float alpha) {
 #else
     // OpenGL 将 FBO 绘制到屏幕上
     glUseProgram(shader.prog);
+    // The sampler of the shader reads the first unit, so the picture is put
+    // there: the unit that is active belongs to whoever drew before.
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, this->media_texture);
+    static GLint textureID = glGetUniformLocation(shader.prog, "ourTexture");
+    if (textureID >= 0) glUniform1i(textureID, 0);
 #ifdef MPV_USE_VAO
     glBindVertexArray(shader.vao);
 #else
