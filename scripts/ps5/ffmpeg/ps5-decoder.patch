@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1524 @@
+@@ -0,0 +1,1447 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -924,52 +924,6 @@
 +    return ok;
 +}
 +
-+/**
-+ * The size and the level of the picture of the stream.
-+ *
-+ * The decoder is asked for them before a single picture is decoded, and the
-+ * fields of the context are still empty at that time: the first picture says
-+ * how big it is, and the parser of the codec reads it out of the parameter
-+ * sets and the picture itself.
-+ */
-+static int measureStream(Ps5Context* ps5, const AVPacket* pkt, int* width, int* height, int* level)
-+{
-+    enum AVCodecID id = ps5->codec == VDEC_CODEC_HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
-+
-+    AVCodecContext* tmp = avcodec_alloc_context3(NULL);
-+    if (!tmp)
-+        return 0;
-+    AVCodecParserContext* parser = av_parser_init(id);
-+    if (!parser) {
-+        avcodec_free_context(&tmp);
-+        return 0;
-+    }
-+
-+    uint8_t* data = NULL;
-+    int     size = 0;
-+
-+    // The parameter sets of the stream first, then the picture: the parser
-+    // needs the sets to read the picture.
-+    if (ps5->headersSize) {
-+        size = (int)ps5->headersSize;
-+        av_parser_parse2(parser, tmp, &data, &size, ps5->headers, size, 0, 0, 0);
-+    }
-+    size = pkt->size;
-+    av_parser_parse2(parser, tmp, &data, &size, pkt->data, size, 0, 0, 0);
-+
-+    int ok = 0;
-+    if (tmp->width > 0 && tmp->height > 0) {
-+        *width  = tmp->width;
-+        *height = tmp->height;
-+        if (tmp->level > 0)
-+            *level = tmp->level;
-+        ok = 1;
-+    }
-+
-+    av_parser_close(parser);
-+    avcodec_free_context(&tmp);
-+    return ok;
-+}
 +
 +/**
 + * The units of an access unit, and the ones the chip is given.
@@ -1324,40 +1278,6 @@
 +            // end the decoding for good.
 +            ps5->draining = 0;
 +
-+            // The chip needs the room for the picture before it decodes it,
-+            // and the size of the picture is only known once it is there: the
-+            // first picture measures the stream, and the chip is asked again
-+            // when the room is too small.
-+            if (!ps5->measured) {
-+                ps5->measured = 1;
-+                int width = 0, height = 0, level = 0;
-+                if (measureStream(ps5, pkt, &width, &height, &level)) {
-+                    fprintf(stderr, "[wiliwili] the console's decoder: the picture is %dx%d, level %d\n",
-+                            width, height, level);
-+                    if (width > ps5->roomWidth || height > ps5->roomHeight) {
-+                        // The room the chip gets goes with the picture: the
-+                        // level of the chip counts like the level of the
-+                        // codec, and a 4K picture wants 5.1 (HEVC) or 5.2
-+                        // (H.264).
-+                        int want = ps5->codec == VDEC_CODEC_HEVC
-+                                       ? (height > 1440 ? 153 : (height > 1080 ? 150 : 123))
-+                                       : (height > 1440 ? 52 : 51);
-+                        if (level > want)
-+                            want = level;
-+                        fprintf(stderr,
-+                                "[wiliwili] the console's decoder: the room grows from %dx%d to %dx%d, level %d\n",
-+                                ps5->roomWidth, ps5->roomHeight, width, height, want);
-+                        stopDecoder(ps5);
-+                        int again = startDecoder(ps5, ps5->codec, ps5->profile, want, width, height);
-+                        if (again < 0) {
-+                            av_packet_unref(pkt);
-+                            ps5->failed = 1;
-+                            return again;
-+                        }
-+                    }
-+                }
-+            }
-+
 +            uint8_t* au     = NULL;
 +            size_t   auSize = 0;
 +            ret             = buildAccessUnit(ps5, pkt, &au, &auSize);
@@ -1389,12 +1309,15 @@
 +                static const int heights[3] = { 1088, 1440, 2176 };
 +                static const int levels[3]  = { 123, 150, 153 };
 +                int next = ++ps5->grown;
++                // The level of the stream is the one the chip wants: the room
++                // grows, the level does not go down.
++                int want = levels[next] > ps5->level ? levels[next] : ps5->level;
 +                fprintf(stderr,
 +                        "[wiliwili] the console's decoder: the picture was refused (0x%08x), the room grows "
 +                        "to %dx%d, level %d\n",
-+                        (unsigned)chipRc, widths[next], heights[next], levels[next]);
++                        (unsigned)chipRc, widths[next], heights[next], want);
 +                stopDecoder(ps5);
-+                if (startDecoder(ps5, ps5->codec, ps5->profile, levels[next], widths[next], heights[next]) < 0) {
++                if (startDecoder(ps5, ps5->codec, ps5->profile, want, widths[next], heights[next]) < 0) {
 +                    ps5->failed = 1;
 +                    av_freep(&au);
 +                    av_packet_unref(pkt);
