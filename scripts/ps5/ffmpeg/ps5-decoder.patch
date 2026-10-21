@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1563 @@
+@@ -0,0 +1,1557 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -419,13 +419,14 @@
 +    pthread_mutex_lock(&g_queueLock);
 +    if (!g_queue) {
 +        VdecComputeMemory info = {.this_size = sizeof(info)};
-+        int rc                = sceVideodec2QueryComputeMemoryInfo(&info);
++        int rc                = 0;
++        PS5_RUN_GUARDED(rc = sceVideodec2QueryComputeMemoryInfo(&info), rc);
 +        if (rc == 0 && memDirect(&g_queueMem, info.cpu_gpu_memory_size, PAGE_16K,
 +                                 PROT_CPU_RW | PROT_GPU_RW) == 0) {
 +            info.cpu_gpu_memory      = g_queueMem.addr;
 +            info.cpu_gpu_memory_size = g_queueMem.len;
 +            VdecComputeConfig config = {.this_size = sizeof(config)};
-+            rc                       = sceVideodec2AllocateComputeQueue(&config, &info, &g_queue);
++            PS5_RUN_GUARDED(rc = sceVideodec2AllocateComputeQueue(&config, &info, &g_queue), rc);
 +            if (rc != 0) {
 +                g_queue = NULL;
 +                memFree(&g_queueMem);
@@ -585,7 +586,8 @@
 +    int bringUp = -1;
 +    for (int attempt = 0; attempt < 3; attempt++) {
 +        VdecMemory mem = {.this_size = sizeof(mem)};
-+        int queryRc = sceVideodec2QueryDecoderMemoryInfo(&config, &mem);
++        int queryRc = 0;
++        PS5_RUN_GUARDED(queryRc = sceVideodec2QueryDecoderMemoryInfo(&config, &mem), queryRc);
 +        if (queryRc != 0) {
 +            av_log(ps5, AV_LOG_ERROR, "The console's video decoder: memory query failed\n");
 +            fprintf(stderr,
@@ -633,10 +635,12 @@
 +            mem.max_frame_buffer_size  = ps5->frameSize;
 +            mem.frame_buffer_alignment = (uint32_t)alignment;
 +            void* decoder               = NULL;
-+            int createRc = sceVideodec2CreateDecoder(&config, &mem, &decoder);
++            int createRc = 0;
++            PS5_RUN_GUARDED(createRc = sceVideodec2CreateDecoder(&config, &mem, &decoder), createRc);
 +            if (createRc == 0) {
 +                // The decoder only starts to work after it has been reset.
-+                int resetRc = sceVideodec2Reset(decoder);
++                int resetRc = 0;
++                PS5_RUN_GUARDED(resetRc = sceVideodec2Reset(decoder), resetRc);
 +                if (resetRc == 0) {
 +                    ps5->decoder = decoder;
 +                    bringUp     = 0;
@@ -703,7 +707,8 @@
 +static void stopDecoder(Ps5Context* ps5)
 +{
 +    if (ps5->decoder) {
-+        sceVideodec2DeleteDecoder(ps5->decoder);
++        int rc = 0;
++        PS5_RUN_GUARDED(rc = sceVideodec2DeleteDecoder(ps5->decoder), rc);
 +        ps5->decoder = NULL;
 +    }
 +    for (int i = 0; i < AU_SLOTS; i++)
@@ -1514,17 +1519,6 @@
 +    }
 +    if (codec == VDEC_CODEC_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
 +        ps5->tenBit = 1;
-+
-+    // The chip's video pipeline is made for the pictures of a game: a
-+    // picture that is taller than it is wide makes it give up, and it gives
-+    // up in a way that takes the application with it. The player is told
-+    // that the decoder is not there, and it decodes the picture on the
-+    // processor instead.
-+    if (height > width) {
-+        av_log(avctx, AV_LOG_WARNING,
-+               "The console's video decoder does not take a picture that is taller than it is wide\n");
-+        return AVERROR(ENOSYS);
-+    }
 +
 +    // The chip's decoder is not made for threads: one thread does the work.
 +    avctx->thread_count = 1;

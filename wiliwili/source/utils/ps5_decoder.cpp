@@ -32,10 +32,13 @@ namespace
  * The chip aborts the process when it refuses work. The application has to
  * survive that: the signal is caught and the work is given up.
  */
-sigjmp_buf g_abortJump;
-volatile sig_atomic_t g_abortArmed = 0;
 struct sigaction g_oldAbort;
 struct sigaction g_oldSegv;
+
+// The jump belongs to the thread that armed it: the chip may give up on
+// another thread, and a jump there would land in the wrong place.
+thread_local sigjmp_buf g_abortJump;
+thread_local volatile sig_atomic_t g_abortArmed = 0;
 
 void abortHandler(int number, siginfo_t* info, void* context)
 {
@@ -339,7 +342,8 @@ void* computeQueue()
     if (!g_queue) {
         brls::Logger::info("ps5 decoder: asking the console for the compute queue's memory");
         VdecComputeMemory info = {.this_size = sizeof(info)};
-        int rc = sceVideodec2QueryComputeMemoryInfo(&info);
+        int rc = 0;
+        runGuarded([&]() { rc = sceVideodec2QueryComputeMemoryInfo(&info); });
         brls::Logger::info("ps5 decoder: compute queue memory query: rc=0x{:08x}, {} KiB", rc,
                            info.cpu_gpu_memory_size >> 10);
         if (rc == 0 && memDirect(&g_queueMem, info.cpu_gpu_memory_size, PAGE_16K,
@@ -476,7 +480,9 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
 
     auto bringUp = [&](VdecConfig* cfg) -> bool {
         VdecMemory mem = {.this_size = sizeof(mem)};
-        if (sceVideodec2QueryDecoderMemoryInfo(cfg, &mem) != 0) {
+        int queryRc = 0;
+        runGuarded([&]() { queryRc = sceVideodec2QueryDecoderMemoryInfo(cfg, &mem); });
+        if (queryRc != 0) {
             brls::Logger::error("ps5 decoder: memory query failed");
             return false;
         }
@@ -525,7 +531,9 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         mem.max_frame_buffer_size  = impl->frameSize;
         mem.frame_buffer_alignment = (uint32_t)alignment;
         void* decoder         = nullptr;
-        if (sceVideodec2CreateDecoder(cfg, &mem, &decoder) != 0) {
+        int createRc = 0;
+        runGuarded([&]() { createRc = sceVideodec2CreateDecoder(cfg, &mem, &decoder); });
+        if (createRc != 0) {
             brls::Logger::error("ps5 decoder: create failed");
             for (auto& slot : impl->au)
                 memFree(&slot);
@@ -536,7 +544,9 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
             return false;
         }
         // The decoder only starts to work after it has been reset.
-        if (sceVideodec2Reset(decoder) != 0) {
+        int resetRc = 0;
+        runGuarded([&]() { resetRc = sceVideodec2Reset(decoder); });
+        if (resetRc != 0) {
             brls::Logger::error("ps5 decoder: reset failed");
             sceVideodec2DeleteDecoder(decoder);
             for (auto& slot : impl->au)
