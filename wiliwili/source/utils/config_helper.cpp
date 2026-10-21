@@ -820,6 +820,11 @@ void ProgramConfig::load() {
         // 初始化纹理缓存数量
 #if defined(__PSV__) || defined(PS4)
         brls::TextureCache::instance().cache.setCapacity(1);
+#elif defined(PS5)
+        // A picture of the lists is a megabyte on this console, and the heap
+        // that holds them is the same one the frames of the video need: the
+        // cache keeps a few of them, not hundreds.
+        brls::TextureCache::instance().cache.setCapacityLimit(48);
 #else
         brls::TextureCache::instance().cache.setCapacity(getSettingItem(SettingItem::TEXTURE_CACHE_NUM, 200));
 #endif

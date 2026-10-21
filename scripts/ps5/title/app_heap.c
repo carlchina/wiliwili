@@ -34,11 +34,16 @@ int32_t sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end,
 int32_t sceKernelMapDirectMemory(void **address, size_t length, int protection,
                                 int flags, int64_t physical_start, size_t alignment);
 
-/* ponytail: 128 MiB process-lifetime heap by default; revisit the budget only
+/* ponytail: 512 MiB process-lifetime heap by default; revisit the budget only
  * for measured application needs. Do not unmap underneath late C++ destructors.
  * A title may define ps5_opengl_heap_size to reserve more (the CTS runner keeps
- * every test case object alive); smaller sizes are tried if mapping fails. */
-__attribute__((weak)) const size_t ps5_opengl_heap_size = 128u * 1024u * 1024u;
+ * every test case object alive); smaller sizes are tried if mapping fails.
+ *
+ * The measurement that set the budget: the pictures of the lists are a
+ * megabyte each and the video keeps its frames in the same heap. With 128 MiB
+ * the heap filled up before a video could show its first frame: the pictures
+ * stopped decoding and the video stayed black. */
+__attribute__((weak)) const size_t ps5_opengl_heap_size = 512u * 1024u * 1024u;
 /* A title may define ps5_opengl_heap_zero_fill as 1: malloc, posix_memalign and
  * the growth of realloc then return zero-filled memory, so code that reads heap
  * memory it never wrote behaves the same on every run. */
@@ -101,9 +106,18 @@ static int ps5_heap_ready(void) {
     return expected == 2;
 
   void *base = MAP_FAILED;
-  /* Flexible memory holds only a few hundred MiB; a larger heap comes from
-   * CPU-cached direct memory (the driver's own memory type), mapped CPU-only. */
-  if (ps5_opengl_heap_size > (128u << 20)) {
+  /* The flexible memory of the title is the pool the application allocates
+   * from: the pictures and the frames of the video live there. It is the
+   * first place to look, and the direct memory - the pool of the graphics
+   * part of the console - is the fallback. */
+  for (size_t size = ps5_opengl_heap_size; base == MAP_FAILED && size >= (128u << 20);
+       size /= 2) {
+    base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (base != MAP_FAILED)
+      ps5_heap_size = size;
+  }
+  if (base == MAP_FAILED) {
+    /* CPU-cached direct memory (the driver's own memory type), mapped CPU-only. */
     int64_t physical = 0;
     void *mapped = NULL;
     const size_t alignment = 2u << 20;
@@ -115,12 +129,6 @@ static int ps5_heap_ready(void) {
       base = mapped;
       ps5_heap_size = size;
     }
-  }
-  for (size_t size = ps5_opengl_heap_size; base == MAP_FAILED && size >= (128u << 20);
-       size /= 2) {
-    base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (base != MAP_FAILED)
-      ps5_heap_size = size;
   }
   if (base == MAP_FAILED) {
     atomic_store_explicit(&ps5_heap_state, -1, memory_order_release);
