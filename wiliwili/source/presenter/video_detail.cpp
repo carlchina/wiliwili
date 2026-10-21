@@ -57,6 +57,37 @@ void parseDanmakuXml(const std::string& xml, std::vector<DanmakuItem>& items) {
                 decoded = "\"";
             } else if (entity == "apos") {
                 decoded = "'";
+            } else if (entity.size() > 1 && entity[0] == '#') {
+                // A number: the character it names.
+                int number = 0;
+                try {
+                    number = entity[1] == 'x' || entity[1] == 'X'
+                                 ? std::stoi(entity.substr(2), nullptr, 16)
+                                 : std::stoi(entity.substr(1));
+                } catch (...) {
+                    at = end;
+                    continue;
+                }
+                if (number <= 0 || number > 0x10FFFF) {
+                    at = end;
+                    continue;
+                }
+                // A character outside of the basic plane takes three bytes.
+                if (number < 0x80) {
+                    decoded = std::string(1, (char)number);
+                } else if (number < 0x800) {
+                    decoded = std::string(1, (char)(0xC0 | (number >> 6)));
+                    decoded += (char)(0x80 | (number & 0x3F));
+                } else if (number < 0x10000) {
+                    decoded = std::string(1, (char)(0xE0 | (number >> 12)));
+                    decoded += (char)(0x80 | ((number >> 6) & 0x3F));
+                    decoded += (char)(0x80 | (number & 0x3F));
+                } else {
+                    decoded = std::string(1, (char)(0xF0 | (number >> 18)));
+                    decoded += (char)(0x80 | ((number >> 12) & 0x3F));
+                    decoded += (char)(0x80 | ((number >> 6) & 0x3F));
+                    decoded += (char)(0x80 | (number & 0x3F));
+                }
             } else {
                 at = end;
                 continue;
@@ -65,6 +96,7 @@ void parseDanmakuXml(const std::string& xml, std::vector<DanmakuItem>& items) {
             at += decoded.size();
         }
 
+        if (text.empty()) continue;  // a comment without a text is not one
         try {
             items.emplace_back(text, attributes.c_str());
         } catch (...) {

@@ -183,10 +183,10 @@
   },
   "hints": {
     "hint1": "Seleziona un gioco dalla schermata home",
-    "hint2": "Tieni premuto il tasto  e clicca  per entrare in hbmenu",
+    "hint2": "Tieni premuto il tasto \uE0E5 e clicca \uE0E0 per entrare in hbmenu",
     "hint3": "In hbmenu, seleziona wiliwili",
     "hint4": "Opzionale: Usa il forwarder NSP di wiliwili (Posiziona wiliwili.nro in /switch/wiliwili.nro)",
-    "hint_nsp": "Clicca  per installare il forwarder NSP",
+    "hint_nsp": "Clicca \uE0E0 per installare il forwarder NSP",
     "hint_confirm": "L'installazione del forwarder NSP potrebbe risultare in un ban\nConferma nuovamente",
     "hint_right": "Le immagini provengono da Internet, il copyright appartiene a Nintendo Co., Ltd"
   },
@@ -397,7 +397,8 @@
         "skip_hint2": "Disattiva il salto dei titoli di testa dal prossimo video",
         "skip_hint3": "Usa titoli di testa personalizzati dal prossimo video",
         "skip_hint4": "Disattiva i titoli di testa personalizzati dal prossimo video",
-        "wiki": "Accedi alla nostra wiki per imparare come funziona lo shader"
+        "wiki": "Accedi alla nostra wiki per imparare come funziona lo shader",
+        "video_info": "Mostra i parametri del video sul video"
       },
       "season": {
         "aspect": "Proporzioni video personalizzate",
