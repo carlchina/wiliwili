@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1472 @@
+@@ -0,0 +1,1536 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -244,8 +244,10 @@
 + * The chip aborts the process when it refuses work. The decoder has to
 + * survive that: the signal is caught and the work is given up.
 + */
-+static sigjmp_buf g_abortJump;
-+static volatile sig_atomic_t g_abortArmed = 0;
++// The jump belongs to the thread that armed it: the chip may give up on
++// another thread, and a jump there would land in the wrong place.
++static __thread sigjmp_buf g_abortJump;
++static __thread volatile sig_atomic_t g_abortArmed = 0;
 +static struct sigaction g_oldAbort;
 +static struct sigaction g_oldSegv;
 +
@@ -809,6 +811,18 @@
 +}
 +
 +/**
++ * The number of the bits before a zero, with its sign (the Exp-Golomb code
++ * of the parameter sets).
++ */
++static int32_t bitsSe(VdecBits* bits)
++{
++    uint32_t value = bitsUe(bits);
++    if (value & 1)
++        return (int32_t)((value + 1) / 2);
++    return -(int32_t)(value / 2);
++}
++
++/**
 + * The parameters of the stream that the chip wants: the profile, the level
 + * and the size of the picture.
 + *
@@ -836,11 +850,61 @@
 +
 +    if (!hevc) {
 +        // H.264: the profile is the first byte of the parameter set and the
-+        // level the third.
-+        if (length < 3)
++        // level the third. The size of the picture comes further down.
++        if (length < 4)
 +            return 0;
-+        *profile = payload[0];
-+        *level   = payload[2];
++        int profileIdc = payload[0];
++        int levelIdc   = payload[2];
++
++        VdecBits bits = { payload + 3, (length - 3) * 8, 0 };
++        bitsUe(&bits);  // the number of the parameter set
++        if (profileIdc == 100 || profileIdc == 110 || profileIdc == 122 || profileIdc == 244 ||
++            profileIdc == 44 || profileIdc == 83 || profileIdc == 86 || profileIdc == 118 ||
++            profileIdc == 128 || profileIdc == 138 || profileIdc == 139 || profileIdc == 134 ||
++            profileIdc == 135) {
++            int chroma = (int)bitsUe(&bits);
++            if (chroma == 3)
++                bitsGet(&bits, 1);
++            bitsUe(&bits);  // the depth of the luma
++            bitsUe(&bits);  // the depth of the chroma
++            bitsGet(&bits, 1);
++            if (bitsGet(&bits, 1)) {
++                int lists = chroma != 3 ? 8 : 12;
++                for (int i = 0; i < lists; i++) {
++                    if (!bitsGet(&bits, 1))
++                        continue;
++                    int size = i < 6 ? 16 : 64;
++                    for (int j = 0; j < size; j++)
++                        bitsSe(&bits);
++                }
++            }
++        }
++        bitsUe(&bits);  // the number of the frame numbers
++        int pocType = (int)bitsUe(&bits);
++        if (pocType == 0) {
++            bitsUe(&bits);
++        } else if (pocType == 1) {
++            bitsGet(&bits, 1);
++            bitsSe(&bits);
++            bitsSe(&bits);
++            int cycle = (int)bitsUe(&bits);
++            for (int i = 0; i < cycle; i++)
++                bitsSe(&bits);
++        }
++        bitsUe(&bits);   // the number of the reference frames
++        bitsGet(&bits, 1);
++        int codedWidth  = ((int)bitsUe(&bits) + 1) * 16;
++        int codedHeight = ((int)bitsUe(&bits) + 1) * 16;
++        int onlyFrames  = (int)bitsGet(&bits, 1);
++        if (!onlyFrames)
++            codedHeight *= 2;
++
++        *profile = profileIdc;
++        *level   = levelIdc;
++        if (codedWidth > 0 && codedHeight > 0) {
++            *width  = codedWidth;
++            *height = codedHeight;
++        }
 +        return 1;
 +    }
 +
