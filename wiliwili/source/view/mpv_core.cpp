@@ -920,6 +920,13 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     GLboolean scissorTest = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, (GLsizei)brls::Application::windowWidth, (GLsizei)brls::Application::windowHeight);
+    // The state of whoever drew before: the video is a flat picture in the
+    // foreground, and the depth test and the culling of the faces would
+    // throw it away.
+    GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean cullFace  = glIsEnabled(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
 #ifdef MPV_USE_VAO
     glBindVertexArray(shader.vao);
 #else
@@ -946,6 +953,8 @@ void MPVCore::draw(brls::Rect area, float alpha) {
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
     if (scissorTest) glEnable(GL_SCISSOR_TEST);
+    if (depthTest) glEnable(GL_DEPTH_TEST);
+    if (cullFace) glEnable(GL_CULL_FACE);
 #endif
 }
 
