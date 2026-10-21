@@ -232,8 +232,9 @@ void MPVCore::on_update(void *self) {
             if (++probe >= 30) {
                 probe = 0;
                 GLint width = 0, height = 0;
-                glGetTexLevelParameteriv(GL_TEXTURE_2D, MPVCore::instance().media_texture, 0, GL_TEXTURE_WIDTH, &width);
-                glGetTexLevelParameteriv(GL_TEXTURE_2D, MPVCore::instance().media_texture, 0, GL_TEXTURE_HEIGHT, &height);
+                glBindTexture(GL_TEXTURE_2D, MPVCore::instance().media_texture);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
                 unsigned char pixel[4] = {0, 0, 0, 0};
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, MPVCore::instance().media_framebuffer);
                 glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
@@ -914,6 +915,11 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     glBindTexture(GL_TEXTURE_2D, this->media_texture);
     static GLint textureID = glGetUniformLocation(shader.prog, "ourTexture");
     if (textureID >= 0) glUniform1i(textureID, 0);
+    // The picture fills the area of the video: the scissors and the viewport
+    // of the interface must not cut it.
+    GLboolean scissorTest = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, (GLsizei)brls::Application::windowWidth, (GLsizei)brls::Application::windowHeight);
 #ifdef MPV_USE_VAO
     glBindVertexArray(shader.vao);
 #else
@@ -939,6 +945,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     glUniform1f(alphaID, alpha);
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+    if (scissorTest) glEnable(GL_SCISSOR_TEST);
 #endif
 }
 
