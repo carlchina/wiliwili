@@ -38,7 +38,8 @@ struct Nal
  * Splits an Annex B stream into its units. The parameter sets are kept
  * apart: the chip wants them in front of the first picture.
  */
-void splitAnnexB(const uint8_t* data, size_t size, std::vector<Nal>& nals, std::vector<Nal>& headers)
+void splitAnnexB(const uint8_t* data, size_t size, std::vector<Nal>& nals, std::vector<Nal>& headers,
+                 bool hevc)
 {
     std::vector<size_t> starts;
     for (size_t i = 0; i + 3 < size; i++) {
@@ -53,7 +54,9 @@ void splitAnnexB(const uint8_t* data, size_t size, std::vector<Nal>& nals, std::
         Nal nal      = {};
         nal.data     = data + begin;
         nal.size     = end - begin;
-        nal.type     = (nal.size > 0) ? (nal.data[0] & 0x1f) : 0;
+        // H.264 keeps the type in the low five bits, HEVC in six bits of the
+        // first two bytes.
+        nal.type = (nal.size > 0) ? (hevc ? ((nal.data[0] >> 1) & 0x3f) : (nal.data[0] & 0x1f)) : 0;
         if (nal.type == 7 || nal.type == 8) {
             // H.264: the sequence and picture parameter sets.
             headers.push_back(nal);
@@ -85,19 +88,43 @@ void runTest(const char* name, const unsigned char* data, unsigned int size, Cod
 
     std::vector<Nal> nals;
     std::vector<Nal> headers;
-    splitAnnexB(data, size, nals, headers);
+    splitAnnexB(data, size, nals, headers, codec == CODEC_HEVC);
     brls::Logger::info("ps5 decoder: {}: {} units, {} parameter sets", name, nals.size(), headers.size());
 
-    // The parameter sets go in front of the first picture.
+    // The chip wants one access unit per picture: a picture is a slice and
+    // whatever comes with it, the parameter sets of the first picture and the
+    // like.
+    const bool hevc = codec == CODEC_HEVC;
+    std::vector<std::vector<Nal>> pictures;
+    bool hasSlice = false;
+    for (const Nal& nal : nals) {
+        bool slice = hevc ? (nal.type <= 31) : (nal.type == 1 || nal.type == 5);
+        if (slice && hasSlice) {
+            // A second slice: the picture before it is complete.
+            pictures.emplace_back();
+            hasSlice = false;
+        }
+        if (pictures.empty())
+            pictures.emplace_back();
+        pictures.back().push_back(nal);
+        if (slice)
+            hasSlice = true;
+    }
+
+    brls::Logger::info("ps5 decoder: {}: {} pictures", name, pictures.size());
+
+    // The parameter sets go in front of every picture: the chip wants them
+    // with the slice they belong to.
     std::vector<uint8_t> accessUnit;
     accessUnit.reserve(1 << 16);
-    bool headersSent = false;
-    int pictures      = 0;
-    auto started      = std::chrono::steady_clock::now();
+    int shown = 0;
+    int sent  = 0;
+    auto started = std::chrono::steady_clock::now();
 
-    for (const Nal& nal : nals) {
+    for (const std::vector<Nal>& picture : pictures) {
         accessUnit.clear();
-        if (!headersSent) {
+        if (sent == 0) {
+            // The parameter sets go in front of the first picture.
             for (const Nal& header : headers) {
                 accessUnit.push_back(0);
                 accessUnit.push_back(0);
@@ -105,22 +132,29 @@ void runTest(const char* name, const unsigned char* data, unsigned int size, Cod
                 accessUnit.push_back(1);
                 accessUnit.insert(accessUnit.end(), header.data, header.data + header.size);
             }
-            headersSent = true;
         }
-        accessUnit.push_back(0);
-        accessUnit.push_back(0);
-        accessUnit.push_back(0);
-        accessUnit.push_back(1);
-        accessUnit.insert(accessUnit.end(), nal.data, nal.data + nal.size);
+        for (const Nal& nal : picture) {
+            accessUnit.push_back(0);
+            accessUnit.push_back(0);
+            accessUnit.push_back(0);
+            accessUnit.push_back(1);
+            accessUnit.insert(accessUnit.end(), nal.data, nal.data + nal.size);
+        }
 
-        std::vector<uint8_t> picture(1920 * 1080 * 3);
+        std::vector<uint8_t> buffer(1920 * 1080 * 3);
         Picture out = {};
-        if (decoder.decode(accessUnit.data(), accessUnit.size(), pictures, out, picture.data(),
-                          picture.size())) {
-            pictures++;
-            brls::Logger::info("ps5 decoder: {}: picture {} is {}x{}, {} bit", name, pictures, out.width,
-                               out.height, out.tenBit ? 10 : 8);
+        if (decoder.decode(accessUnit.data(), accessUnit.size(), sent, out, buffer.data(), buffer.size())) {
+            shown++;
+            brls::Logger::info("ps5 decoder: {}: picture {} is {}x{}, {} bit", name, shown, out.width, out.height,
+                               out.tenBit ? 10 : 8);
         }
+        // The chip buffers the picture: it comes out with the next call.
+        if (decoder.flush(out, buffer.data(), buffer.size())) {
+            shown++;
+            brls::Logger::info("ps5 decoder: {}: picture {} is {}x{}, {} bit", name, shown, out.width, out.height,
+                               out.tenBit ? 10 : 8);
+        }
+        sent++;
     }
 
     // The decoder holds its pictures: they come out when it is drained.
@@ -129,20 +163,25 @@ void runTest(const char* name, const unsigned char* data, unsigned int size, Cod
         Picture out = {};
         if (!decoder.flush(out, picture.data(), picture.size()))
             break;
-        pictures++;
-        brls::Logger::info("ps5 decoder: {}: drained picture {} is {}x{}, {} bit", name, pictures, out.width,
+        shown++;
+        brls::Logger::info("ps5 decoder: {}: drained picture {} is {}x{}, {} bit", name, shown, out.width,
                            out.height, out.tenBit ? 10 : 8);
     }
 
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - started)
                        .count();
-    brls::Logger::info("ps5 decoder: {}: {} pictures in {} ms", name, pictures, elapsed);
+    brls::Logger::info("ps5 decoder: {}: {} pictures in {} ms", name, shown, elapsed);
 }
 
 }  // namespace
 
 void Decoder::selfTest()
+{
+    ps5decoder::runWithGuard([]() { Decoder::selfTestInner(); });
+}
+
+void Decoder::selfTestInner()
 {
     brls::Logger::info("ps5 decoder: the console's decoder is {}", Decoder::available() ? "there" : "not there");
     // The level the console takes: H.264 counts by ten, HEVC by thirty.

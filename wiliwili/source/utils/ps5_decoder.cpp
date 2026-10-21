@@ -13,13 +13,70 @@
 
 #include "utils/ps5_decoder.hpp"
 
+#include <csignal>
+#include <cstddef>
 #include <cstring>
+#include <functional>
+#include <setjmp.h>
 #include <mutex>
 
 #include <borealis/core/logger.hpp>
 
 namespace ps5decoder
 {
+
+namespace
+{
+
+/**
+ * The chip aborts the process when it refuses work. The application has to
+ * survive that: the signal is caught and the work is given up.
+ */
+sigjmp_buf g_abortJump;
+volatile sig_atomic_t g_abortArmed = 0;
+struct sigaction g_oldAbort;
+struct sigaction g_oldSegv;
+
+void abortHandler(int number, siginfo_t* info, void* context)
+{
+    if (g_abortArmed) {
+        g_abortArmed = 0;
+        siglongjmp(g_abortJump, number);
+    }
+    // Not ours: the handler that was there before gets it.
+    struct sigaction* previous = number == SIGABRT ? &g_oldAbort : &g_oldSegv;
+    if (previous->sa_flags & SA_SIGINFO)
+        previous->sa_sigaction(number, info, context);
+    else if (previous->sa_handler != SIG_DFL && previous->sa_handler != SIG_IGN)
+        previous->sa_handler(number);
+    else {
+        ::signal(number, SIG_DFL);
+        raise(number);
+    }
+}
+
+/// Runs the work with the chip's abort caught.
+bool runGuarded(const std::function<void()>& work)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_sigaction = abortHandler;
+    action.sa_flags     = SA_SIGINFO;
+    sigaction(SIGABRT, &action, &g_oldAbort);
+    sigaction(SIGSEGV, &action, &g_oldSegv);
+    g_abortArmed = 1;
+    if (sigsetjmp(g_abortJump, 1) == 0) {
+        work();
+    } else {
+        brls::Logger::error("ps5 decoder: the console's decoder gave up");
+    }
+    g_abortArmed = 0;
+    sigaction(SIGABRT, &g_oldAbort, nullptr);
+    sigaction(SIGSEGV, &g_oldSegv, nullptr);
+    return true;
+}
+
+}  // namespace
 
 namespace
 {
@@ -82,10 +139,12 @@ struct VdecOutput
     bool is_valid;
     bool is_error_frame;
     uint8_t picture_count;
+    uint8_t padding;
     uint32_t codec_type;
     uint32_t frame_width;
     uint32_t frame_pitch;  // in samples
     uint32_t frame_height;
+    uint32_t reserved;
     void* frame_buffer;
     uint64_t frame_buffer_size;
     uint32_t frame_format;
@@ -121,6 +180,8 @@ static_assert(sizeof(VdecConfig) == 0x48, "decoder config");
 static_assert(sizeof(VdecMemory) == 0x48, "decoder memory");
 static_assert(sizeof(VdecInput) == 0x30, "input");
 static_assert(sizeof(VdecOutput) == 0x38, "output");
+static_assert(offsetof(VdecOutput, frame_buffer) == 0x20, "output frame buffer");
+static_assert(offsetof(VdecOutput, frame_pitch_in_bytes) == 0x34, "output pitch");
 static_assert(sizeof(VdecFrameBuffer) == 0x20, "frame buffer");
 static_assert(sizeof(VdecComputeMemory) == 0x18, "compute memory");
 static_assert(sizeof(VdecComputeConfig) == 0x10, "compute config");
@@ -144,12 +205,18 @@ int sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64
 int sceKernelReleaseDirectMemory(int64_t start, size_t len);
 int64_t sceKernelGetDirectMemorySize(void);
 int sceKernelMapFlexibleMemory(void** addr, size_t len, int prot, int flags);
+int sceKernelMapNamedFlexibleMemory(void** addr, size_t len, int prot, int flags, const char* name);
 int sceKernelReleaseFlexibleMemory(void* addr, size_t len);
 int sceKernelMunmap(void* addr, size_t len);
 }
 
 constexpr int PROT_CPU_RW     = 0x03;
+constexpr int PROT_CPU_W      = 0x02;
 constexpr int PROT_GPU_RW     = 0x30;
+// The chip checks the protection of the memory it is given: its own
+// workspaces and the pools the access units and the pictures live in are
+// written by the console and read by the chip.
+constexpr int PROT_CHIP_POOL  = PROT_CPU_W | PROT_GPU_RW;
 constexpr int DIRECT_TYPE     = 12;
 constexpr size_t PAGE_16K     = 0x4000;
 constexpr int AU_SLOTS        = 8;
@@ -217,7 +284,9 @@ bool memCpu(Mem* mem, size_t len)
             // Room for 4K HEVC's 76 MiB, so the block rarely has to grow.
             size_t want = len > ((size_t)96 << 20) ? len : ((size_t)96 << 20);
             void* addr   = nullptr;
-            if (sceKernelMapFlexibleMemory(&addr, want, PROT_CPU_RW, 0) == 0) {
+            // The decoder finds its workspace by name, so it has to be a named
+            // piece of memory.
+            if (sceKernelMapNamedFlexibleMemory(&addr, want, PROT_CPU_RW, 0, "wiliwili-vdec") == 0) {
                 g_cpuBlock     = addr;
                 g_cpuBlockLen  = want;
             }
@@ -303,17 +372,62 @@ struct Decoder::Impl
     bool tenBit        = false;
     unsigned frameCount = 0;
     size_t frameSize   = 0;
-    bool frameHeld[32] = {};
+    unsigned nextSlot  = 0;
+    unsigned nextAu    = 0;
+    unsigned lastSlot  = 0;
+    // The slots the chip still holds a picture in: handing one of those out
+    // again is refused.
+    bool held[32]      = {};
     Mem frames         = {};
     Mem cpu            = {};
     Mem gpu            = {};
     Mem cpuGpu         = {};
     Mem au[AU_SLOTS]   = {};
+
+    /**
+     * A picture buffer from the decoder's own store that the chip does not
+     * hold a picture in yet. The chip writes the decoded picture there;
+     * without one it has nowhere to put it, and it refuses the work.
+     */
+    VdecFrameBuffer nextFrameBuffer()
+    {
+        VdecFrameBuffer fb = {.this_size = sizeof(fb)};
+        if (!frames.addr || frameSize == 0)
+            return fb;
+        unsigned slot = frameCount;
+        for (unsigned i = 0; i < frameCount; i++) {
+            unsigned index = (nextSlot + i) % frameCount;
+            if (!held[index]) {
+                slot     = index;
+                nextSlot = index + 1;
+                break;
+            }
+        }
+        if (slot == frameCount)
+            return fb;
+        lastSlot = slot;
+        fb.frame_buffer      = (uint8_t*)frames.addr + slot * frameSize;
+        fb.frame_buffer_size = frameSize;
+        return fb;
+    }
+
+    /// The slot the chip took a picture in is free again once it was copied out.
+    void releaseFrameBuffer(bool accepted)
+    {
+        if (accepted && lastSlot < frameCount)
+            held[lastSlot] = false;
+    }
 };
 
 Decoder::~Decoder()
 {
     close();
+}
+
+/// Runs the work with the console's decoder; the chip's abort is caught.
+bool runWithGuard(const std::function<void()>& work)
+{
+    return runGuarded(work);
 }
 
 bool Decoder::available()
@@ -345,10 +459,11 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         // The video's own size, rounded to 16; 4K when it is not known yet.
         .max_frame_width        = width ? (int32_t)((width + 15) & ~15) : 3840,
         .max_frame_height       = height ? (int32_t)((height + 15) & ~15) : 2176,
-        // The decoder sizes its picture store for the stream itself.
-        .max_dpb_frame_count    = -1,
-        // Several pictures at once: one at a time left it idle between calls.
-        .decode_pipeline_depth  = 4,
+        // The decoder's picture store: four frames.
+        .max_dpb_frame_count    = 4,
+        // One picture at a time: the pipeline of several costs memory, and
+        // the console refuses the decoder when it does not fit.
+        .decode_pipeline_depth  = 1,
         .compute_queue          = queue,
         .cpu_affinity_mask      = 0x3f,
         .cpu_thread_priority    = 700,
@@ -367,13 +482,13 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         impl->frameSize  = (mem.max_frame_buffer_size + alignment - 1) & ~(alignment - 1);
         bool ok = (!mem.cpu_memory_size || memCpu(&impl->cpu, mem.cpu_memory_size)) &&
                   (!mem.gpu_memory_size ||
-                   memDirect(&impl->gpu, mem.gpu_memory_size, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW)) &&
+                   memDirect(&impl->gpu, mem.gpu_memory_size, PAGE_16K, PROT_CHIP_POOL)) &&
                   (!mem.cpu_gpu_memory_size ||
                    memDirect(&impl->cpuGpu, mem.cpu_gpu_memory_size, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW)) &&
                   memDirect(&impl->frames, impl->frameSize * impl->frameCount, alignment,
-                            PROT_CPU_RW | PROT_GPU_RW);
+                            PROT_CHIP_POOL);
         for (int i = 0; ok && i < AU_SLOTS; i++)
-            ok = memDirect(&impl->au[i], AU_SLOT_SIZE, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW);
+            ok = memDirect(&impl->au[i], AU_SLOT_SIZE, PAGE_16K, PROT_CHIP_POOL);
         if (!ok) {
             brls::Logger::error("ps5 decoder: no memory for the decoder");
             for (auto& slot : impl->au)
@@ -402,9 +517,26 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         mem.cpu_memory        = impl->cpu.addr;
         mem.gpu_memory        = impl->gpu.addr;
         mem.cpu_gpu_memory    = impl->cpuGpu.addr;
+        // The sizes the chip asked for, rounded up as it wants them.
+        mem.gpu_memory_size        = impl->gpu.len;
+        mem.cpu_gpu_memory_size    = impl->cpuGpu.len;
+        mem.max_frame_buffer_size  = impl->frameSize;
+        mem.frame_buffer_alignment = (uint32_t)alignment;
         void* decoder         = nullptr;
         if (sceVideodec2CreateDecoder(cfg, &mem, &decoder) != 0) {
             brls::Logger::error("ps5 decoder: create failed");
+            for (auto& slot : impl->au)
+                memFree(&slot);
+            memFree(&impl->frames);
+            memFree(&impl->cpuGpu);
+            memFree(&impl->gpu);
+            memFree(&impl->cpu);
+            return false;
+        }
+        // The decoder only starts to work after it has been reset.
+        if (sceVideodec2Reset(decoder) != 0) {
+            brls::Logger::error("ps5 decoder: reset failed");
+            sceVideodec2DeleteDecoder(decoder);
             for (auto& slot : impl->au)
                 memFree(&slot);
             memFree(&impl->frames);
@@ -419,22 +551,11 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
 
     bool ok = bringUp(&config);
     if (!ok) {
-        // The pipeline depth costs memory: one picture at a time still plays
-        // most videos.
-        config.decode_pipeline_depth = 1;
-        ok = bringUp(&config);
-    }
-    if (!ok) {
         // Small pictures were refused by the memory query while 1080p and 4K
         // never were: ask for room for 1080p, which still decodes them.
         config.max_frame_width  = config.max_frame_width > 1920 ? config.max_frame_width : 1920;
         config.max_frame_height = config.max_frame_height > 1088 ? config.max_frame_height : 1088;
-        config.decode_pipeline_depth = 4;
         ok = bringUp(&config);
-        if (!ok) {
-            config.decode_pipeline_depth = 1;
-            ok = bringUp(&config);
-        }
     }
     if (!ok) {
         delete impl;
@@ -456,16 +577,10 @@ bool Decoder::decode(const uint8_t* annexb, size_t size, uint64_t pts, Picture& 
     if (size > AU_SLOT_SIZE)
         return false;
 
-    // The chip reads the access unit from the graphics memory.
-    Mem* slot = nullptr;
-    for (auto& candidate : impl->au) {
-        if (!candidate.addr) {
-            slot = &candidate;
-            break;
-        }
-    }
-    if (!slot)
-        return false;
+    // The chip reads the access unit from the graphics memory. The slots are
+    // used in turn: the chip reads them before the next call.
+    Mem* slot = &impl->au[impl->nextAu % AU_SLOTS];
+    impl->nextAu++;
     memcpy(slot->addr, annexb, size);
 
     VdecInput in = {
@@ -475,16 +590,26 @@ bool Decoder::decode(const uint8_t* annexb, size_t size, uint64_t pts, Picture& 
         .pts_data  = pts,
         .dts_data  = UINT64_MAX,
     };
-    VdecFrameBuffer fb = {.this_size = sizeof(fb)};
+    VdecFrameBuffer fb = impl->nextFrameBuffer();
     VdecOutput out     = {.this_size = sizeof(out)};
 
     int rc = sceVideodec2Decode(impl->decoder, &in, &fb, &out);
+    static long calls = 0;
+    if (++calls <= 6 || out.is_valid) {
+        brls::Logger::info(
+            "ps5 decoder: decode #{} rc=0x{:08x} accepted={} valid={} error={} pictures={} codec={} {}x{} pitch={}",
+            calls, rc, (int)fb.is_accepted, (int)out.is_valid, (int)out.is_error_frame, (int)out.picture_count,
+            out.codec_type, out.frame_width, out.frame_height, out.frame_pitch_in_bytes);
+    }
     if (rc != 0) {
         brls::Logger::error("ps5 decoder: decode failed (0x{:08x})", rc);
+        impl->releaseFrameBuffer(fb.is_accepted);
         return false;
     }
-    if (!out.is_valid)
+    if (!out.is_valid) {
+        impl->releaseFrameBuffer(fb.is_accepted);
         return false;
+    }
 
     // The picture is in the decoder's own memory: copy it out.
     size_t needed = impl->tenBit ? (size_t)out.frame_width * out.frame_height * 3
@@ -498,6 +623,7 @@ bool Decoder::decode(const uint8_t* annexb, size_t size, uint64_t pts, Picture& 
     size_t chromaHeight   = impl->tenBit ? out.frame_height / 2 : out.frame_height / 2;
     memcpy(buffer, src, lumaSize);
     memcpy(buffer + lumaSize, src + lumaSize, (size_t)pitch * chromaHeight);
+    impl->releaseFrameBuffer(fb.is_accepted);
 
     picture.data   = buffer;
     picture.width  = (int)out.frame_width;
@@ -513,11 +639,19 @@ bool Decoder::flush(Picture& picture, uint8_t* buffer, size_t bufferSize)
     if (!impl || !impl->decoder)
         return false;
 
-    VdecFrameBuffer fb = {.this_size = sizeof(fb)};
+    VdecFrameBuffer fb = impl->nextFrameBuffer();
     VdecOutput out     = {.this_size = sizeof(out)};
     int rc = sceVideodec2Flush(impl->decoder, &fb, &out);
-    if (rc != 0 || !out.is_valid)
+    static long flushes = 0;
+    if (++flushes <= 6 || out.is_valid) {
+        brls::Logger::info("ps5 decoder: flush #{} rc=0x{:08x} accepted={} valid={} error={} pictures={} {}x{}",
+                           flushes, rc, (int)fb.is_accepted, (int)out.is_valid, (int)out.is_error_frame,
+                           (int)out.picture_count, out.frame_width, out.frame_height);
+    }
+    if (rc != 0 || !out.is_valid) {
+        impl->releaseFrameBuffer(fb.is_accepted);
         return false;
+    }
 
     size_t needed = impl->tenBit ? (size_t)out.frame_width * out.frame_height * 3
                                  : (size_t)out.frame_width * out.frame_height * 3 / 2;
@@ -530,6 +664,7 @@ bool Decoder::flush(Picture& picture, uint8_t* buffer, size_t bufferSize)
     size_t chromaHeight = out.frame_height / 2;
     memcpy(buffer, src, lumaSize);
     memcpy(buffer + lumaSize, src + lumaSize, (size_t)pitch * chromaHeight);
+    impl->releaseFrameBuffer(fb.is_accepted);
 
     picture.data   = buffer;
     picture.width  = (int)out.frame_width;

@@ -49,8 +49,11 @@ int main(int argc, char* argv[]) {
 
 #ifdef PS5
     // The console's hardware video decoder, with the test streams that ship
-    // with the application.
-    ps5decoder::Decoder::selfTest();
+    // with the application. It is off by default: the chip gives up on work
+    // it does not like, and that must not disturb the application.
+    if (ProgramConfig::instance().getBoolOption(SettingItem::PS5_HWDEC_TEST)) {
+        ps5decoder::Decoder::selfTest();
+    }
 #endif
 
     // Init the app and i18n

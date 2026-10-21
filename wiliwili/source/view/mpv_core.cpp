@@ -374,11 +374,17 @@ void MPVCore::init() {
     // starts refusing allocations once it is used up. mpv's default network
     // cache alone is 150 MiB, which does not fit next to the decoder and the
     // renderer.
-    mpvSetOptionString(mpv, "vd-lavc-threads", "3");
+    mpvSetOptionString(mpv, "vd-lavc-threads", "2");
     mpvSetOptionString(mpv, "demuxer-max-bytes", "24M");
     mpvSetOptionString(mpv, "demuxer-readahead-secs", "10");
     mpvSetOptionString(mpv, "cache-secs", "30");
     mpvSetOptionString(mpv, "vd-queue-enable", "no");
+    // The console takes the stacks of the threads from a pool of its own that
+    // is much smaller than the system has memory, and the kernel starts
+    // refusing allocations once it is used up. Fewer threads, less memory.
+    mpvSetOptionString(mpv, "audio-threads", "1");
+    mpvSetOptionString(mpv, "demuxer-threads", "0");
+    mpvSetOptionString(mpv, "vd-spawn", "no");
 #elif defined(__PSV__)
     mpvSetOptionString(mpv, "vd-lavc-threads", "4");
     mpvSetOptionString(mpv, "fbo-format", "rgba8");

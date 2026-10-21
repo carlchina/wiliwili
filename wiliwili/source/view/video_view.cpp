@@ -623,9 +623,48 @@ VideoView::~VideoView() {
     brls::Logger::debug("Delete VideoView done");
 }
 
+void VideoView::updateVideoInfo() {
+    if (!mpvCore->isValid()) return;
+
+    // The parameters of the video that is playing: the codec, the picture, the
+    // bitrate and what the decoder and the renderer did with it.
+    std::string codec  = mpvCore->getString("video-codec");
+    std::string pixel  = mpvCore->getString("video-params/pixelformat");
+    std::string hwdec  = mpvCore->getString("hwdec-current");
+    int width          = mpvCore->getInt("video-params/w");
+    int height         = mpvCore->getInt("video-params/h");
+    int fps            = mpvCore->getInt("container-fps");
+    int bitrate        = mpvCore->getInt("video-bitrate") / 1024;
+    int dropped        = mpvCore->getInt("frame-drop-count");
+    double avsync      = mpvCore->getDouble("avsync");
+
+    if (codec.empty()) {
+        videoInfoLabel->setText("");
+        videoInfoLabel->setVisibility(brls::Visibility::GONE);
+        return;
+    }
+
+    videoInfoLabel->setText(fmt::format("{} · {}x{}@{} · {} · {} kbps\n{} · avsync {:.3f} · dropped {}",
+        codec, width, height, fps, pixel, bitrate, hwdec.empty() ? "none" : hwdec, avsync, dropped));
+    videoInfoLabel->setVisibility(brls::Visibility::VISIBLE);
+    brls::Logger::debug("video info: {} {}x{}@{} {}", codec, width, height, fps, pixel);
+}
+
 void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height, brls::Style style,
                      brls::FrameContext* ctx) {
     if (!mpvCore->isValid()) return;
+
+    // The parameters on the video itself, refreshed once a second.
+    if (SHOW_VIDEO_INFO) {
+        static brls::Time time = 0;
+        brls::Time now         = brls::getCPUTimeUsec();
+        if ((now - time) > 1000000) {
+            this->updateVideoInfo();
+            time = now;
+        }
+    } else if (videoInfoLabel->getVisibility() != brls::Visibility::GONE) {
+        videoInfoLabel->setVisibility(brls::Visibility::GONE);
+    }
     float alpha        = this->getAlpha();
     brls::Time current = brls::getCPUTimeUsec();
     bool drawOSD       = this->osd_state == OSDState::ALWAYS_ON || current < this->osdLastShowTime;
@@ -754,6 +793,10 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
 
     // draw video profile
     videoProfile->frame(ctx);
+
+    // draw the parameters of the playing video: this view draws its children
+    // itself, so the label has to be drawn here.
+    if (SHOW_VIDEO_INFO) videoInfoLabel->frame(ctx);
 }
 
 void VideoView::drawHighlightProgress(NVGcontext* vg, float x, float y, float width, float alpha) {

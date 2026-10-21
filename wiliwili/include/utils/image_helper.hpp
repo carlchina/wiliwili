@@ -97,7 +97,7 @@ public:
 #ifdef PS5
     // The console needs more of them: releasing a curl handle waits for the
     // peer to close the connection, which holds a worker for a few seconds.
-    inline static size_t REQUEST_THREADS = 4;
+    inline static size_t REQUEST_THREADS = 2;
 #else
     inline static size_t REQUEST_THREADS = 1;
 #endif

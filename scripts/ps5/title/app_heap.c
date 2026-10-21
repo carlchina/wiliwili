@@ -246,6 +246,15 @@ size_t ps5_opengl_heap_live_bytes(void) {
   return atomic_load_explicit(&ps5_heap_live_bytes, memory_order_relaxed);
 }
 
+/* The peak, and how many allocations the heap refused. */
+size_t ps5_opengl_heap_peak_bytes(void) {
+  return atomic_load_explicit(&ps5_heap_peak_bytes, memory_order_relaxed);
+}
+
+size_t ps5_opengl_heap_failures(void) {
+  return atomic_load_explicit(&ps5_heap_failures, memory_order_relaxed);
+}
+
 void ps5_opengl_heap_stats_print(unsigned iteration) {
   if (iteration == 0) {
     int state = atomic_load_explicit(&ps5_heap_state, memory_order_acquire);

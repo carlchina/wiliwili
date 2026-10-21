@@ -195,6 +195,8 @@ std::unordered_map<SettingItem, ProgramOption> ProgramConfig::SETTING_MAP = {
     {SettingItem::PLAYER_AUTO_PLAY, {"player_auto_play", {}, {}, 1}},
     {SettingItem::PLAYER_BOTTOM_BAR, {"player_bottom_bar", {}, {}, 1}},
     {SettingItem::PLAYER_HIGHLIGHT_BAR, {"player_highlight_bar", {}, {}, 0}},
+    {SettingItem::PLAYER_SHOW_VIDEO_INFO, {"player_show_video_info", {}, {}, 0}},
+    {SettingItem::PS5_HWDEC_TEST, {"ps5_hwdec_test", {}, {}, 0}},
     {SettingItem::PLAYER_SKIP_OPENING_CREDITS, {"player_skip_opening_credits", {}, {}, 1}},
     {SettingItem::PLAYER_LOW_QUALITY, {"player_low_quality", {}, {}, 1}},
 #if defined(IOS) || defined(__PSV__) || defined(__SWITCH__)
@@ -644,6 +646,7 @@ void ProgramConfig::load() {
 
     // 初始化是否固定显示底部高能进度条
     VideoView::HIGHLIGHT_PROGRESS_BAR = getBoolOption(SettingItem::PLAYER_HIGHLIGHT_BAR);
+    VideoView::SHOW_VIDEO_INFO = getBoolOption(SettingItem::PLAYER_SHOW_VIDEO_INFO);
 
     // 初始化是否使用硬件加速
 #if defined(__PSV__) && defined(BOREALIS_USE_OPENGL)

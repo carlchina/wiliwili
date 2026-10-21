@@ -93,9 +93,15 @@ public:
 
     /**
      * Decodes the test streams that ship with the application and reports
-     * the pictures that come out.
+     * the pictures that come out. The console's decoder gives up on work it
+     * does not like, and that must not take the application with it.
      */
     static void selfTest();
+
+private:
+    static void selfTestInner();
+
+public:
 
 private:
     struct Impl;
