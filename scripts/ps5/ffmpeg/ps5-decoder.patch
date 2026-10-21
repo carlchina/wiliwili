@@ -29,7 +29,7 @@
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,960 @@
+@@ -0,0 +1,972 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -114,9 +114,6 @@
 +{
 +    VDEC_CODEC_AVC  = 1,
 +    VDEC_CODEC_HEVC = 974921,
-+    // The chip's number for the HEVC profile: the decoder that does Main and
-+    // Main 10. The stream's own profile says which of the two it is.
-+    VDEC_HEVC_PROFILE = 2,
 +};
 +
 +typedef struct VdecConfig
@@ -450,6 +447,8 @@
 +    int    tenBit;
 +    int    draining;
 +    int    failed;
++    // How many access units went in without a picture coming out.
++    int    silent;
 +
 +    unsigned frameCount;
 +    size_t   frameSize;
@@ -895,6 +894,14 @@
 +            if (out.is_valid) {
 +                ps5->picture    = out;
 +                ps5->hasPicture = 1;
++                ps5->silent     = 0;
++            } else if (++ps5->silent > 32) {
++                // The chip takes the work and gives nothing back: it does
++                // not want this stream. The player has to hear about it.
++                av_log(avctx, AV_LOG_ERROR,
++                       "The console's video decoder gives no pictures\n");
++                ps5->failed = 1;
++                return AVERROR_EXTERNAL;
 +            }
 +            continue;
 +        }
@@ -919,12 +926,17 @@
 +    ps5->pkt = avctx->internal->in_pkt;
 +
 +    int codec = avctx->codec_id == AV_CODEC_ID_HEVC ? VDEC_CODEC_HEVC : VDEC_CODEC_AVC;
-+    // The chip's own numbers: HEVC is always the decoder that does Main and
-+    // Main 10, and it wants level 5.2 (the one that plays 4K). H.264 takes
-+    // the level the stream says, or a plain one when it does not say.
-+    int profile = codec == VDEC_CODEC_HEVC ? VDEC_HEVC_PROFILE
-+                                           : (avctx->profile ? avctx->profile : 66);
-+    int level   = codec == VDEC_CODEC_HEVC ? 156 : (avctx->level ? avctx->level : 51);
++    // The chip counts the profiles the way the codecs do: 66 is Baseline, 77
++    // is Main and 100 is High for H.264, 1 is Main and 2 is Main 10 for
++    // HEVC. The stream's own profile is the one the chip wants.
++    int profile = avctx->profile ? avctx->profile : (codec == VDEC_CODEC_HEVC ? 1 : 100);
++    // The level goes with the size of the picture: H.264 counts by ten and
++    // HEVC by thirty, and 4K wants a higher one than 1080p.
++    int level;
++    if (codec == VDEC_CODEC_HEVC)
++        level = avctx->height > 2176 ? 153 : (avctx->height > 1088 ? 150 : 123);
++    else
++        level = avctx->height > 2176 ? 52 : 51;
 +    // The bit depth is the stream's own: the chip's profile says nothing
 +    // about it.
 +    ps5->tenBit = codec == VDEC_CODEC_HEVC && avctx->profile == FF_PROFILE_HEVC_MAIN_10;

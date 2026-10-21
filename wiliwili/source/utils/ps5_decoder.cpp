@@ -86,9 +86,6 @@ enum
 {
     VDEC_CODEC_AVC  = 1,
     VDEC_CODEC_HEVC = 974921,
-    // The chip's number for the HEVC profile: the decoder that does Main and
-    // Main 10. The stream's own profile says which of the two it is.
-    VDEC_HEVC_PROFILE = 2,
 };
 
 struct VdecConfig
@@ -457,9 +454,9 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
         .this_size              = sizeof(config),
         .resource_type          = 1,
         .codec_type             = codec == CODEC_AVC ? VDEC_CODEC_AVC : VDEC_CODEC_HEVC,
-        // The chip's own number for the profile: for HEVC it is always the
-        // decoder that does Main and Main 10, whatever the stream is.
-        .profile                = (uint32_t)(codec == CODEC_HEVC ? VDEC_HEVC_PROFILE : profile),
+        // The chip counts the profiles the way the codecs do: 66 is High,
+        // 1 is HEVC's Main and 2 its Main 10.
+        .profile                = (uint32_t)profile,
         .max_level              = (uint32_t)level,
         // The video's own size, rounded to 16; 4K when it is not known yet.
         .max_frame_width        = width ? (int32_t)((width + 15) & ~15) : 3840,
