@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1447 @@
+@@ -0,0 +1,1456 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -749,14 +749,21 @@
 +            start = i + 4;
 +        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
 +            start = i + 3;
-+        if (start < 0 || start >= size)
++        if (start < 0) {
++            // No marker here: the search goes on. The parameter sets of a
++            // stream start with the video parameter set, so giving up at the
++            // first one would never find the sequence parameter set.
++            i++;
++            continue;
++        }
++        if (start >= size)
 +            break;
 +
 +        int nalType = hevc ? ((data[start] >> 1) & 0x3f) : (data[start] & 0x1f);
 +        if (nalType == type)
 +            return data + start;
 +
-+        i = start;
++        i = start + 1;
 +    }
 +    return NULL;
 +}
@@ -1404,8 +1411,10 @@
 +        level   = streamLevel;
 +        // The room the chip gets holds the picture as it is coded: the
 +        // encoder rounds the height up to its block, which is up to 64.
-+        width  = (streamWidth + 63) & ~63;
-+        height = (streamHeight + 63) & ~63;
++        if (streamWidth > 0 && streamHeight > 0) {
++            width  = (streamWidth + 63) & ~63;
++            height = (streamHeight + 63) & ~63;
++        }
 +    }
 +    if (codec == VDEC_CODEC_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
 +        ps5->tenBit = 1;
