@@ -29,7 +29,7 @@
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,990 @@
+@@ -0,0 +1,1071 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -566,8 +566,14 @@
 +    int bringUp = -1;
 +    for (int attempt = 0; attempt < 3; attempt++) {
 +        VdecMemory mem = {.this_size = sizeof(mem)};
-+        if (sceVideodec2QueryDecoderMemoryInfo(&config, &mem) != 0) {
++        int queryRc = sceVideodec2QueryDecoderMemoryInfo(&config, &mem);
++        if (queryRc != 0) {
 +            av_log(ps5, AV_LOG_ERROR, "The console's video decoder: memory query failed\n");
++            fprintf(stderr,
++                    "[wiliwili] the console's decoder: no memory for %s profile %d, level %d, %dx%d: "
++                    "0x%08x\n",
++                    codec == VDEC_CODEC_AVC ? "H.264" : "HEVC", profile, level, config.max_frame_width,
++                    config.max_frame_height, (unsigned)queryRc);
 +            return AVERROR_EXTERNAL;
 +        }
 +        size_t alignment = mem.frame_buffer_alignment > PAGE_16K ? mem.frame_buffer_alignment : PAGE_16K;
@@ -608,14 +614,24 @@
 +            mem.max_frame_buffer_size  = ps5->frameSize;
 +            mem.frame_buffer_alignment = (uint32_t)alignment;
 +            void* decoder               = NULL;
-+            if (sceVideodec2CreateDecoder(&config, &mem, &decoder) == 0) {
++            int createRc = sceVideodec2CreateDecoder(&config, &mem, &decoder);
++            if (createRc == 0) {
 +                // The decoder only starts to work after it has been reset.
-+                if (sceVideodec2Reset(decoder) == 0) {
++                int resetRc = sceVideodec2Reset(decoder);
++                if (resetRc == 0) {
 +                    ps5->decoder = decoder;
 +                    bringUp     = 0;
 +                } else {
++                    fprintf(stderr, "[wiliwili] the console's decoder: the reset failed: 0x%08x\n",
++                            (unsigned)resetRc);
 +                    sceVideodec2DeleteDecoder(decoder);
 +                }
++            } else {
++                fprintf(stderr,
++                        "[wiliwili] the console's decoder: %s profile %d, level %d, %dx%d was refused: "
++                        "0x%08x\n",
++                        codec == VDEC_CODEC_AVC ? "H.264" : "HEVC", profile, level, config.max_frame_width,
++                        config.max_frame_height, (unsigned)createRc);
 +            }
 +        }
 +        if (bringUp == 0)
@@ -629,20 +645,13 @@
 +        memFree(&ps5->gpu);
 +        memFree(&ps5->cpu);
 +
-+        // Small pictures were refused by the memory query while 1080p and 4K
-+        // never were: ask for room for 1080p, which still decodes them.
++        // The chip refuses a decoder that does not fit the stream: a
++        // picture that is bigger than 1080p gets room for 4K instead, and
++        // the level goes with the room.
 +        if (attempt == 0) {
-+            // Small pictures were refused by the memory query while 1080p and
-+            // 4K never were: ask for room for 1080p, which still decodes them.
-+            // A picture bigger than 1080p gets room for 4K instead, for the
-+            // same reason.
-+            if (config.max_frame_width < 1920 || config.max_frame_height < 1088) {
-+                config.max_frame_width  = 1920;
-+                config.max_frame_height = 1088;
-+            } else if (config.max_frame_width < 3840 || config.max_frame_height < 2176) {
-+                config.max_frame_width  = 3840;
-+                config.max_frame_height = 2176;
-+            }
++            config.max_frame_width  = 3840;
++            config.max_frame_height = 2176;
++            config.max_level        = codec == VDEC_CODEC_AVC ? 52 : 153;
 +            continue;
 +        }
 +        if (attempt == 1) {
@@ -662,6 +671,9 @@
 +    av_log(ps5, AV_LOG_INFO, "The console's video decoder is ready (%s %dx%d, %u pictures of %zu KiB)\n",
 +           codec == VDEC_CODEC_AVC ? "H.264" : "HEVC", config.max_frame_width, config.max_frame_height,
 +           ps5->frameCount, ps5->frameSize >> 10);
++    fprintf(stderr, "[wiliwili] the console's decoder is ready: %s %dx%d, %u pictures of %zu KiB\n",
++            codec == VDEC_CODEC_AVC ? "H.264" : "HEVC", config.max_frame_width, config.max_frame_height,
++            ps5->frameCount, ps5->frameSize >> 10);
 +    return 0;
 +}
 +
@@ -699,10 +711,71 @@
 +}
 +
 +/**
++ * The parameter set of the given kind in a stream that is in Annex B.
++ *
++ * The chip counts the pictures the way the codecs do, and it wants to know
++ * what the stream is before it decodes it: the profile and the level of the
++ * parameter set are what it asks for.
++ */
++static const uint8_t* findParameterSet(const uint8_t* data, int size, int type, int hevc)
++{
++    if (!data || size <= 0)
++        return NULL;
++
++    int i = 0;
++    while (i + 3 <= size) {
++        int start = -1;
++        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1)
++            start = i + 4;
++        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
++            start = i + 3;
++        if (start < 0 || start >= size)
++            break;
++
++        int nalType = hevc ? ((data[start] >> 1) & 0x3f) : (data[start] & 0x1f);
++        if (nalType == type)
++            return data + start;
++
++        i = start;
++    }
++    return NULL;
++}
++
++/**
++ * The profile of the stream, from its sequence parameter set.
++ *
++ * The decoder is asked for the parameters of the stream before a single
++ * picture is decoded, and the fields of the context are still empty at that
++ * time: the profile is only in the parameter set.
++ */
++static int streamProfile(int codec, const uint8_t* annexb, int size)
++{
++    int hevc   = codec == VDEC_CODEC_HEVC;
++    int spsType = hevc ? 33 : 7;
++
++    const uint8_t* sps = findParameterSet(annexb, size, spsType, hevc);
++    if (!sps)
++        return 0;
++
++    // The parameter set begins with the header of the unit: one byte for
++    // H.264, two for HEVC.
++    const uint8_t* payload = sps + (hevc ? 2 : 1);
++    if (hevc) {
++        // general_profile_space, general_tier_flag, general_profile_idc
++        if (payload + 2 > annexb + size)
++            return 0;
++        return payload[1] & 0x1f;
++    }
++    // profile_idc
++    if (payload + 1 > annexb + size)
++        return 0;
++    return payload[0];
++}
++
++/**
 + * The access unit the chip reads: the parameter sets and the packet.
 + */
-+static int buildAccessUnit(Ps5Context* ps5, const AVPacket* pkt, uint8_t** out, size_t* outSize)
-+{
++static int buildAccessUnit(Ps5Context* ps5, const AVPacket* pkt, uint8_t** out, size_t* outSize){
 +    size_t headers = ps5->headersSize;
 +    size_t total   = headers + (size_t)pkt->size;
 +    if (total > AU_SLOT_SIZE)
@@ -937,20 +1010,15 @@
 +    // The chip counts the profiles the way the codecs do: 66 is Baseline, 77
 +    // is Main and 100 is High for H.264, 1 is Main and 2 is Main 10 for
 +    // HEVC. The stream's own profile is the one the chip wants.
-+    int profile = avctx->profile ? avctx->profile : (codec == VDEC_CODEC_HEVC ? 1 : 100);
++    int profile = codec == VDEC_CODEC_HEVC ? 1 : 100;
 +    // The level goes with the size of the picture: H.264 counts by ten and
 +    // HEVC by thirty. 1080p wants 5.1 (H.264) or 4.1 (HEVC), 1440p wants
 +    // 5.0 (HEVC) and 4K wants 5.2 (H.264) or 5.1 (HEVC).
-+    int level;
-+    if (codec == VDEC_CODEC_HEVC)
-+        level = avctx->height > 1440 ? 153 : (avctx->height > 1080 ? 150 : 123);
-+    else
-+        level = avctx->height > 1440 ? 52 : 51;
++    int level = codec == VDEC_CODEC_HEVC ? 123 : 51;
++    int width = 1920, height = 1088;
 +    // The bit depth is the stream's own: the chip's profile says nothing
 +    // about it.
 +    ps5->tenBit = codec == VDEC_CODEC_HEVC && avctx->profile == FF_PROFILE_HEVC_MAIN_10;
-+    int width   = avctx->width;
-+    int height  = avctx->height;
 +
 +    // The bitstream filter turns the parameter sets of the container into
 +    // Annex B; the decoder's own extradata is still the one of the
@@ -964,12 +1032,25 @@
 +    if (extraSize > 0)
 +        readHeaders(ps5, extra, extraSize);
 +
++    // The profile of the stream is in its parameter set: the fields of the
++    // context are still empty, because no picture was decoded yet.
++    int streamProfileValue = streamProfile(codec, extra, extraSize);
++    if (streamProfileValue > 0)
++        profile = streamProfileValue;
++    if (codec == VDEC_CODEC_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
++        ps5->tenBit = 1;
++
 +    // The chip's decoder is not made for threads: one thread does the work.
 +    avctx->thread_count = 1;
++
++    fprintf(stderr, "[wiliwili] the console's decoder: %s profile %d, level %d, %dx%d, %s\n",
++            codec == VDEC_CODEC_HEVC ? "HEVC" : "H.264", profile, level, width, height,
++            ps5->tenBit ? "10 bit" : "8 bit");
 +
 +    int ret = startDecoder(ps5, codec, profile, level, width, height);
 +    if (ret < 0) {
 +        av_log(avctx, AV_LOG_ERROR, "The console's video decoder did not start\n");
++        fprintf(stderr, "[wiliwili] the console's decoder did not start\n");
 +        return ret;
 +    }
 +    return 0;

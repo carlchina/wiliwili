@@ -629,6 +629,7 @@ void VideoView::updateVideoInfo() {
     // The parameters of the video that is playing: the codec, the picture, the
     // bitrate and what the decoder and the renderer did with it.
     std::string codec  = mpvCore->getString("video-codec");
+    std::string decoderName = codec;
     std::string pixel  = mpvCore->getString("video-params/pixelformat");
     std::string hwdec  = mpvCore->getString("hwdec-current");
     int width          = mpvCore->getInt("video-params/w");
@@ -644,10 +645,21 @@ void VideoView::updateVideoInfo() {
         return;
     }
 
+#ifdef PS5
+    // The console has a video chip of its own, and the decoders that run on
+    // it are not mpv's hardware decoding: they are the decoder of the
+    // stream, and their name says that they are the chip's.
+    size_t chip = codec.find("_ps5");
+    if (chip != std::string::npos) {
+        codec = codec.substr(0, chip) + " (chip)";
+        hwdec = "console chip";
+    }
+#endif
+
     videoInfoLabel->setText(fmt::format("{} · {}x{}@{} · {} · {} kbps\n{} · avsync {:.3f} · dropped {}",
         codec, width, height, fps, pixel, bitrate, hwdec.empty() ? "none" : hwdec, avsync, dropped));
     videoInfoLabel->setVisibility(brls::Visibility::VISIBLE);
-    brls::Logger::debug("video info: {} {}x{}@{} {}", codec, width, height, fps, pixel);
+    brls::Logger::debug("video info: {} {}x{}@{} {}", decoderName, width, height, fps, pixel);
 }
 
 void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height, brls::Style style,
