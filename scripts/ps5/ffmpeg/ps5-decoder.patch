@@ -18,17 +18,18 @@
  OBJS-$(CONFIG_AAC_DECODER)             += aactab.o \
 --- a/libavcodec/allcodecs.c
 +++ b/libavcodec/allcodecs.c
-@@ -831,6 +831,7 @@
+@@ -831,6 +831,8 @@
  extern const FFCodec ff_libaom_av1_decoder;
  /* hwaccel hooks only, so prefer external decoders */
  extern const FFCodec ff_av1_decoder;
 +extern const FFCodec ff_h264_ps5_decoder;
++extern const FFCodec ff_hevc_ps5_decoder;
  extern const FFCodec ff_av1_cuvid_decoder;
  extern const FFCodec ff_av1_mediacodec_decoder;
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,947 @@
+@@ -0,0 +1,957 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -113,6 +114,9 @@
 +{
 +    VDEC_CODEC_AVC  = 1,
 +    VDEC_CODEC_HEVC = 974921,
++    // The chip's number for the HEVC profile: the decoder that does Main and
++    // Main 10. The stream's own profile says which of the two it is.
++    VDEC_HEVC_PROFILE = 2,
 +};
 +
 +typedef struct VdecConfig
@@ -558,7 +562,6 @@
 +        .optimize_progressive_video = true,
 +    };
 +    ps5->frameCount = 10;
-+    ps5->tenBit     = codec != VDEC_CODEC_AVC && profile == 2;
 +
 +    int bringUp = -1;
 +    for (int attempt = 0; attempt < 2; attempt++) {
@@ -906,11 +909,16 @@
 +
 +    ps5->pkt = avctx->internal->in_pkt;
 +
-+    int codec   = avctx->codec_id == AV_CODEC_ID_HEVC ? VDEC_CODEC_HEVC : VDEC_CODEC_AVC;
-+    // The chip counts the levels the way the codecs do. When the stream does
-+    // not say, the most ordinary ones are asked for.
-+    int profile = avctx->profile ? avctx->profile : (codec == VDEC_CODEC_AVC ? 66 : 1);
-+    int level   = avctx->level ? avctx->level : 51;
++    int codec = avctx->codec_id == AV_CODEC_ID_HEVC ? VDEC_CODEC_HEVC : VDEC_CODEC_AVC;
++    // The chip's own numbers: HEVC is always the decoder that does Main and
++    // Main 10, and it wants level 5.2 (the one that plays 4K). H.264 takes
++    // the level the stream says, or a plain one when it does not say.
++    int profile = codec == VDEC_CODEC_HEVC ? VDEC_HEVC_PROFILE
++                                           : (avctx->profile ? avctx->profile : 66);
++    int level   = codec == VDEC_CODEC_HEVC ? 156 : (avctx->level ? avctx->level : 51);
++    // The bit depth is the stream's own: the chip's profile says nothing
++    // about it.
++    ps5->tenBit = codec == VDEC_CODEC_HEVC && avctx->profile == FF_PROFILE_HEVC_MAIN_10;
 +    int width   = avctx->width;
 +    int height  = avctx->height;
 +
@@ -954,31 +962,34 @@
 +    return ff_default_get_supported_config(avctx, codec, config, flags, out_configs, out_num_configs);
 +}
 +
-+static const AVClass ps5_class = {
-+    .class_name = "h264_ps5",
-+    .item_name  = av_default_item_name,
-+    .version    = LIBAVUTIL_VERSION_INT,
-+};
++#define PS5_DECODER(dec_id, dec_name, dec_long_name, dec_bsf)                              \
++    static const AVClass dec_name##_class = {                                           \
++        .class_name = #dec_name,                                                         \
++        .item_name  = av_default_item_name,                                              \
++        .version    = LIBAVUTIL_VERSION_INT,                                             \
++    };                                                                                   \
++    const FFCodec ff_##dec_name##_decoder = {                                            \
++        .p.name         = #dec_name,                                                     \
++        .p.long_name    = dec_long_name,                                                 \
++        .p.type         = AVMEDIA_TYPE_VIDEO,                                            \
++        .p.id           = dec_id,                                                        \
++        .priv_data_size = sizeof(Ps5Context),                                            \
++        .p.priv_class   = &dec_name##_class,                                             \
++        .init           = ps5_decode_init,                                               \
++        .close          = ps5_decode_close,                                              \
++        FF_CODEC_RECEIVE_FRAME_CB(ps5_receive_frame),                                    \
++        .get_supported_config = ps5_get_supported_config,                                \
++        .bsfs           = dec_bsf,                                                       \
++        .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,               \
++        .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_SETS_FRAME_PROPS, \
++        .p.wrapper_name = "ps5",                                                         \
++    }
 +
-+const FFCodec ff_h264_ps5_decoder = {
-+    .p.name         = "h264_ps5",
-+    .p.long_name    = "PS5 H.264 decoder",
-+    .p.type         = AVMEDIA_TYPE_VIDEO,
-+    .p.id           = AV_CODEC_ID_H264,
-+    .priv_data_size = sizeof(Ps5Context),
-+    .p.priv_class   = &ps5_class,
-+    .init           = ps5_decode_init,
-+    .close          = ps5_decode_close,
-+    FF_CODEC_RECEIVE_FRAME_CB(ps5_receive_frame),
-+    .get_supported_config = ps5_get_supported_config,
-+    .bsfs           = "h264_mp4toannexb",
-+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
-+    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_SETS_FRAME_PROPS,
-+    .p.wrapper_name = "ps5",
-+};
++PS5_DECODER(AV_CODEC_ID_H264, h264_ps5, "PS5 H.264 decoder", "h264_mp4toannexb");
++PS5_DECODER(AV_CODEC_ID_HEVC, hevc_ps5, "PS5 HEVC decoder", "hevc_mp4toannexb");
 --- a/libavcodec/ps5.h
 +++ b/libavcodec/ps5.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -1003,5 +1014,6 @@
 +#include "libavcodec/codec.h"
 +
 +extern const FFCodec ff_h264_ps5_decoder;
++extern const FFCodec ff_hevc_ps5_decoder;
 +
 +#endif /* AVCODEC_PS5_H */

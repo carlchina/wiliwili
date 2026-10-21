@@ -371,9 +371,10 @@ public:
 #elif defined(PS4)
     inline static std::string PLAYER_HWDEC_METHOD = "no";
 #elif defined(PS5)
-    // The console has a video chip of its own: the decoder that runs on it
-    // is part of the player. It is asked for by name.
-    inline static std::string PLAYER_HWDEC_METHOD = "h264_ps5";
+    // The console has a video chip of its own: the decoders that run on it
+    // are part of the player. They are asked for by name, and the player
+    // takes the one that fits the video.
+    inline static std::string PLAYER_HWDEC_METHOD = "h264_ps5,hevc_ps5";
 #else
     inline static std::string PLAYER_HWDEC_METHOD = "auto-safe";
 #endif

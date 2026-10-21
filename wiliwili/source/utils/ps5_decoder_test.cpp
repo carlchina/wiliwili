@@ -185,9 +185,10 @@ void Decoder::selfTestInner()
 {
     brls::Logger::info("ps5 decoder: the console's decoder is {}", Decoder::available() ? "there" : "not there");
     // The level the console takes: H.264 counts by ten, HEVC by thirty.
+    // For HEVC the console wants level 5.2 (156), the one that plays 4K.
     runTest("H.264 baseline", ps5TestH264Baseline, ps5TestH264BaselineSize, CODEC_AVC, 66, 51, 320, 180);
     runTest("H.264 main", ps5TestH264Main, ps5TestH264MainSize, CODEC_AVC, 77, 51, 320, 180);
-    runTest("HEVC main", ps5TestHevcMain, ps5TestHevcMainSize, CODEC_HEVC, 1, 123, 320, 180);
+    runTest("HEVC main", ps5TestHevcMain, ps5TestHevcMainSize, CODEC_HEVC, 1, 156, 320, 180);
 }
 
 }  // namespace ps5decoder
