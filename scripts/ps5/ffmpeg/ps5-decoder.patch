@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1161 @@
+@@ -0,0 +1,1185 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -939,6 +939,18 @@
 +
 +    int rc = 0;
 +    PS5_RUN_GUARDED(rc = sceVideodec2Decode(ps5->decoder, &in, &fb, out), rc);
++    {
++        // The console's decoder says what it did with the access unit: the
++        // first ones and every picture that comes out.
++        static long calls = 0;
++        if (++calls <= 6 || out->is_valid || rc != 0) {
++            fprintf(stderr,
++                    "[wiliwili] the console's decoder: decode #%ld rc=0x%08x accepted=%d valid=%d error=%d "
++                    "pictures=%d %dx%d\n",
++                    calls, (unsigned)rc, (int)fb.is_accepted, (int)out->is_valid, (int)out->is_error_frame,
++                    (int)out->picture_count, (int)out->frame_width, (int)out->frame_height);
++        }
++    }
 +    if (rc != 0) {
 +        releaseFrameBuffer(ps5, fb.is_accepted);
 +        return AVERROR_EXTERNAL;
@@ -1014,6 +1026,10 @@
 +                av_packet_unref(pkt);
 +                continue;
 +            }
++            // A picture comes again: the chip works again after the flush.
++            // The player seeks when the video starts, and the flush must not
++            // end the decoding for good.
++            ps5->draining = 0;
 +
 +            // The chip needs the room for the picture before it decodes it,
 +            // and the size of the picture is only known once it is there: the
@@ -1138,6 +1154,14 @@
 +    fprintf(stderr, "[wiliwili] the console's decoder: %s profile %d, level %d, %dx%d, %s\n",
 +            codec == VDEC_CODEC_HEVC ? "HEVC" : "H.264", profile, level, width, height,
 +            ps5->tenBit ? "10 bit" : "8 bit");
++    {
++        // The parameter sets that go in front of every picture: their size
++        // and their first bytes say whether the stream gave any.
++        fprintf(stderr, "[wiliwili] the console's decoder: %d bytes of parameter sets:", (int)ps5->headersSize);
++        for (int i = 0; i < 16 && i < (int)ps5->headersSize; i++)
++            fprintf(stderr, " %02x", ps5->headers[i]);
++        fprintf(stderr, "\n");
++    }
 +
 +    int ret = startDecoder(ps5, codec, profile, level, width, height);
 +    if (ret < 0) {
