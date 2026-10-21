@@ -554,9 +554,16 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
     bool ok = bringUp(&config);
     if (!ok) {
         // Small pictures were refused by the memory query while 1080p and 4K
-        // never were: ask for room for 1080p, which still decodes them.
-        config.max_frame_width  = config.max_frame_width > 1920 ? config.max_frame_width : 1920;
-        config.max_frame_height = config.max_frame_height > 1088 ? config.max_frame_height : 1088;
+        // never were: ask for room for 1080p, which still decodes them. A
+        // picture bigger than 1080p gets room for 4K instead, for the same
+        // reason.
+        if (config.max_frame_width < 1920 || config.max_frame_height < 1088) {
+            config.max_frame_width  = 1920;
+            config.max_frame_height = 1088;
+        } else if (config.max_frame_width < 3840 || config.max_frame_height < 2176) {
+            config.max_frame_width  = 3840;
+            config.max_frame_height = 2176;
+        }
         ok = bringUp(&config);
     }
     if (!ok) {

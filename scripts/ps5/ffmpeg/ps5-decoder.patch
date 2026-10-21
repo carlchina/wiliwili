@@ -29,7 +29,7 @@
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,982 @@
+@@ -0,0 +1,990 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -634,8 +634,15 @@
 +        if (attempt == 0) {
 +            // Small pictures were refused by the memory query while 1080p and
 +            // 4K never were: ask for room for 1080p, which still decodes them.
-+            config.max_frame_width  = config.max_frame_width > 1920 ? config.max_frame_width : 1920;
-+            config.max_frame_height = config.max_frame_height > 1088 ? config.max_frame_height : 1088;
++            // A picture bigger than 1080p gets room for 4K instead, for the
++            // same reason.
++            if (config.max_frame_width < 1920 || config.max_frame_height < 1088) {
++                config.max_frame_width  = 1920;
++                config.max_frame_height = 1088;
++            } else if (config.max_frame_width < 3840 || config.max_frame_height < 2176) {
++                config.max_frame_width  = 3840;
++                config.max_frame_height = 2176;
++            }
 +            continue;
 +        }
 +        if (attempt == 1) {
@@ -932,12 +939,13 @@
 +    // HEVC. The stream's own profile is the one the chip wants.
 +    int profile = avctx->profile ? avctx->profile : (codec == VDEC_CODEC_HEVC ? 1 : 100);
 +    // The level goes with the size of the picture: H.264 counts by ten and
-+    // HEVC by thirty, and 4K wants a higher one than 1080p.
++    // HEVC by thirty. 1080p wants 5.1 (H.264) or 4.1 (HEVC), 1440p wants
++    // 5.0 (HEVC) and 4K wants 5.2 (H.264) or 5.1 (HEVC).
 +    int level;
 +    if (codec == VDEC_CODEC_HEVC)
-+        level = avctx->height > 2176 ? 153 : (avctx->height > 1088 ? 150 : 123);
++        level = avctx->height > 1440 ? 153 : (avctx->height > 1080 ? 150 : 123);
 +    else
-+        level = avctx->height > 2176 ? 52 : 51;
++        level = avctx->height > 1440 ? 52 : 51;
 +    // The bit depth is the stream's own: the chip's profile says nothing
 +    // about it.
 +    ps5->tenBit = codec == VDEC_CODEC_HEVC && avctx->profile == FF_PROFILE_HEVC_MAIN_10;
