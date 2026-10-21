@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1557 @@
+@@ -0,0 +1,1568 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -89,6 +89,7 @@
 +#include "libavcodec/ps5.h"
 +
 +#include <pthread.h>
++#include <unistd.h>
 +#include <signal.h>
 +#include <setjmp.h>
 +
@@ -253,6 +254,15 @@
 +
 +static void abortHandler(int number, siginfo_t* info, void* context)
 +{
++    // A note that survives the crash: the write is the one thing a signal
++    // handler may do.
++    {
++        static const char mine[]   = "[wiliwili] a signal while the chip was working\n";
++        static const char other[] = "[wiliwili] a signal from another thread\n";
++        const char* text = g_abortArmed ? mine : other;
++        ssize_t ignored  = write(1, text, strlen(text));
++        (void)ignored;
++    }
 +    if (g_abortArmed) {
 +        g_abortArmed = 0;
 +        siglongjmp(g_abortJump, number);
@@ -285,6 +295,7 @@
 +            work;                                                                       \
 +        } else {                                                                        \
 +            result = AVERROR_EXTERNAL;                                                  \
++            fprintf(stderr, "[wiliwili] the chip gave up\n");                            \
 +        }                                                                               \
 +        g_abortArmed = 0;                                                               \
 +        sigaction(SIGABRT, &g_oldAbort, NULL);                                          \
