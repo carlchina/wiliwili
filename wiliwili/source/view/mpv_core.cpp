@@ -409,6 +409,12 @@ void MPVCore::init() {
     // log
     // mpvSetOptionString(mpv, "msg-level", "ffmpeg=trace");
     // mpvSetOptionString(mpv, "msg-level", "all=no");
+#if defined(PS5)
+    // The console's video decoder says what it does through FFmpeg's log, and
+    // the player keeps it: the messages are the only way to tell that the
+    // chip refused a stream.
+    mpvSetOptionString(mpv, "msg-level", "ffmpeg=info");
+#endif
     if (MPVCore::TERMINAL) {
         mpvSetOptionString(mpv, "terminal", "yes");
         if (brls::Logger::getLogLevel() >= brls::LogLevel::LOG_DEBUG) {
