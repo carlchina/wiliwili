@@ -263,6 +263,11 @@ size_t ps5_opengl_heap_failures(void) {
   return atomic_load_explicit(&ps5_heap_failures, memory_order_relaxed);
 }
 
+/* How much memory the heap holds, so a title can report it. */
+size_t ps5_opengl_heap_capacity(void) {
+  return (size_t)PS5_OPENGL_HEAP_SIZE;
+}
+
 void ps5_opengl_heap_stats_print(unsigned iteration) {
   if (iteration == 0) {
     int state = atomic_load_explicit(&ps5_heap_state, memory_order_acquire);
