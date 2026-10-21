@@ -29,7 +29,7 @@
  extern const FFCodec ff_av1_mediacodec_encoder;
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,982 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -78,6 +78,7 @@
 +#include "libavutil/log.h"
 +
 +#include "libavcodec/avcodec.h"
++#include "libavcodec/bsf.h"
 +#include "libavcodec/codec.h"
 +#include "libavcodec/codec_internal.h"
 +#include "libavcodec/decode.h"
@@ -943,8 +944,17 @@
 +    int width   = avctx->width;
 +    int height  = avctx->height;
 +
-+    if (avctx->extradata_size > 0)
-+        readHeaders(ps5, avctx->extradata, avctx->extradata_size);
++    // The bitstream filter turns the parameter sets of the container into
++    // Annex B; the decoder's own extradata is still the one of the
++    // container, and the chip would make nothing of it.
++    const uint8_t* extra   = avctx->extradata;
++    int            extraSize = avctx->extradata_size;
++    if (avctx->internal && avctx->internal->bsf && avctx->internal->bsf->par_out->extradata) {
++        extra     = avctx->internal->bsf->par_out->extradata;
++        extraSize = avctx->internal->bsf->par_out->extradata_size;
++    }
++    if (extraSize > 0)
++        readHeaders(ps5, extra, extraSize);
 +
 +    // The chip's decoder is not made for threads: one thread does the work.
 +    avctx->thread_count = 1;
