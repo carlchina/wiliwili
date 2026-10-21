@@ -209,6 +209,11 @@ endif ()
 
 # source cpp
 file(GLOB_RECURSE MAIN_SRC wiliwili/source/*.cpp)
+if (NOT PLATFORM_PS5)
+    # The test streams of the console's hardware video decoder are of no use
+    # on the other platforms and only make the binary bigger.
+    list(FILTER MAIN_SRC EXCLUDE REGEX "ps5_decoder_test_data\\.cpp$")
+endif ()
 if (WIN32)
     configure_file("${CMAKE_SOURCE_DIR}/wiliwili/app_win32.rc.in" "${CMAKE_BINARY_DIR}/app_win32.rc")
     list(APPEND MAIN_SRC ${CMAKE_BINARY_DIR}/app_win32.rc)
