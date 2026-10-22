@@ -693,7 +693,9 @@ void SettingActivity::onContentAvailable() {
         "wiliwili/setting/app/network/proxy_hint"_i18n, "wiliwili/setting/app/network/proxy_hint"_i18n, 64);
 
 /// Hardware decode
-#if defined(PS4) || defined(__PSV__) && defined(BOREALIS_USE_OPENGL)
+#if defined(PS4) || (defined(__PSV__) && defined(BOREALIS_USE_OPENGL)) || defined(PS5)
+// The console's own video chip is not ready to be offered yet: the switch
+// is hidden, and the setting in the configuration file still decides.
     btnHWDEC->setVisibility(brls::Visibility::GONE);
 #else
     btnHWDEC->init("wiliwili/setting/app/playback/hwdec"_i18n, conf.getBoolOption(SettingItem::PLAYER_HWDEC),
