@@ -12,6 +12,7 @@
 #include <borealis.hpp>
 
 #include "utils/config_helper.hpp"
+#include "utils/stage.hpp"
 #include "utils/activity_helper.hpp"
 #include "utils/ps5_decoder.hpp"
 #include "view/mpv_core.hpp"
@@ -61,6 +62,11 @@ int main(int argc, char* argv[]) {
         brls::Logger::error("Unable to init application");
         return EXIT_FAILURE;
     }
+
+    // A watch over the main loop: a title that stops answering does not
+    // write anything itself, so the watch says where it stopped.
+    stage::startWatch();
+    brls::Application::getRunLoopEvent()->subscribe([]() { stage::tick(); });
 
     // Return directly to the desktop when closing the application (only for NX)
     brls::Application::getPlatform()->exitToHomeMode(true);

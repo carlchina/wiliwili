@@ -9,6 +9,7 @@
 #include <stb_image.h>
 
 #include "utils/image_helper.hpp"
+#include "utils/stage.hpp"
 #include "utils/string_helper.hpp"
 #include "api/bilibili/util/http.hpp"
 
@@ -295,6 +296,7 @@ void ImageHelper::requestImage() {
     // happen on the thread that runs the sync closures: the response is
     // therefore kept out of the closure and released by this worker instead.
     brls::sync([this, imageData, imageW, imageH, isWebp]() {
+        stage::Marker marker("picture texture");
         // 再检查一遍缓存
         int tex = brls::TextureCache::instance().getCache(this->imageUrl);
         if (tex > 0) {

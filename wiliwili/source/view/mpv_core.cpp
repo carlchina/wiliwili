@@ -11,6 +11,7 @@
 #include <borealis/core/time.hpp>
 
 #include "utils/config_helper.hpp"
+#include "utils/stage.hpp"
 #include "utils/number_helper.hpp"
 #include "utils/crash_helper.hpp"
 #include "view/mpv_core.hpp"
@@ -226,6 +227,7 @@ void MPVCore::on_update(void *self) {
             static double mpvRenderAt = 0;
             double start = brls::getCPUTimeUsec() / 1000.0;
 #endif
+            stage::Marker marker("mpv render");
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
 #ifdef PS5
             mpvRenderMs += brls::getCPUTimeUsec() / 1000.0 - start;
@@ -930,6 +932,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     }
 #else
     // OpenGL 将 FBO 绘制到屏幕上
+    stage::Marker marker("video draw");
     glUseProgram(shader.prog);
     // The sampler of the shader reads the first unit, so the picture is put
     // there: the unit that is active belongs to whoever drew before.

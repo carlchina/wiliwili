@@ -12,6 +12,7 @@
 #include <lunasvg.h>
 
 #include "view/danmaku_core.hpp"
+#include "utils/stage.hpp"
 #include "utils/config_helper.hpp"
 #include "utils/string_helper.hpp"
 #include "utils/number_helper.hpp"
@@ -544,6 +545,7 @@ void DanmakuCore::clearMask(NVGcontext *vg, float x, float y, float width, float
 }
 
 void DanmakuCore::draw(NVGcontext *vg, float x, float y, float width, float height, float alpha) {
+    stage::Marker marker("danmaku draw");
     if (!DanmakuCore::DANMAKU_ON) return;
     if (!this->danmakuLoaded) return;
     if (danmakuData.empty()) return;
