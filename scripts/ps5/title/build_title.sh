@@ -63,6 +63,9 @@ out_dir=${PS5_TITLE_OUT_DIR:-$root/dist/$title_id}
 work_dir=$(cd -- "$build_dir" && pwd)/title
 link_txt=$build_dir/CMakeFiles/wiliwili.dir/link.txt
 compiler="$PS5_BOILERPLATE/tooling/prospero-clang18"
+# A checkout can come without the executable bit, and the wrapper is run
+# directly below.
+[[ -f ${compiler} ]] && chmod +x "${compiler}" 2>/dev/null || true
 jobs=${BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)}
 fself_magic=0x1D3D154F
 # Loader/container constants: deliberately separate from the public application

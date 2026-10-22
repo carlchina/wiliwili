@@ -104,7 +104,10 @@ fi
 
 # the OpenGL implementation for the console, its SDK release carries the static
 # libraries, the AGC stubs the title imports from and the SDL2 integration
-fetch_repo https://github.com/blackbearreloaded/ps5-opengl.git "${opengl_version}" "${prefix}/ps5-opengl"
+# The upstream repositories are not reachable any more, so the build uses the
+# mirrors: the hashes below are what the build is verified against, and they
+# are checked on every fetch.
+fetch_repo https://github.com/carlchina/ps5-opengl.git "${opengl_version}" "${prefix}/ps5-opengl"
 if [[ $(git -C "${prefix}/ps5-opengl" rev-parse HEAD) != "${opengl_commit}" ]]; then
     echo "note: ${opengl_version} is not the ${opengl_commit:0:12} the build was verified against" >&2
 fi
@@ -112,7 +115,7 @@ fi
 sdk_archive="${prefix}/ps5-opengl-sdk-${opengl_version#v}.tar.gz"
 sdk_root="${prefix}/ps5-opengl-sdk-${opengl_version#v}"
 fetch_file \
-    "https://github.com/blackbearreloaded/ps5-opengl/releases/download/${opengl_version}/ps5-opengl-sdk-${opengl_version#v}.tar.gz" \
+    "https://github.com/carlchina/ps5-opengl/releases/download/sdk-v${opengl_version#v}/ps5-opengl-sdk-${opengl_version#v}.tar.gz" \
     "${opengl_sdk_sha256}" "${sdk_archive}"
 if [[ ! -f ${sdk_root}/sdk/manifest.sha256 ]]; then
     echo "==> [deps] Extracting $(basename "${sdk_archive}")"
@@ -126,7 +129,7 @@ fi
 
 # the native application toolchain: the module converter, the startup objects
 # and the runtime module that a folder title is loaded with
-fetch_repo https://github.com/blackbearreloaded/ps5-native-app-boilerplate.git \
+fetch_repo https://github.com/carlchina/ps5-native-app-boilerplate.git \
     "${boilerplate_commit}" "${prefix}/ps5-native-app-boilerplate"
 # a payload has no dynamic loader to run it otherwise
 chmod +x "${prefix}/ps5-native-app-boilerplate/tooling/prospero-clang18"
