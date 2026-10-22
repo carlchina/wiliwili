@@ -70,18 +70,8 @@ if [[ -n ${crash} && ${crash} != *"Failed to open file"* ]]; then
 fi
 
 # The logger probes (library/borealis/library/include/borealis/core/logger.hpp)
-# show which step of a log call stalls, if any.
-probe=$(curl --silent --show-error --max-time 30 \
-    "ftp://${host}:${port}/data/wiliwili/logprobe.log") || true
-if [[ -n ${probe} && ${probe} != *"Failed to open file"* ]]; then
-    echo "==> [title] /data/wiliwili/logprobe.log on ${host}" >&2
-    if [[ -n ${output} ]]; then
-        printf '%s\n' "${probe}" > "${output%.*}.probe.txt"
-        echo "==> [title] Saved to ${output%.*}.probe.txt" >&2
-    else
-        printf '%s\n' "${probe}"
-    fi
-fi
+# that wrote logprobe.log came from a diagnostic build and are gone; the shim
+# deletes the leftover file at start-up.
 
 if [[ ${klog_seconds} != 0 ]]; then
     echo "==> [title] Kernel log of ${host}:3232 (${klog_seconds}s)" >&2

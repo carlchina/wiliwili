@@ -62,6 +62,15 @@ static FILE *wiliwili_log_open(const char *directory)
     if ((size_t)snprintf(path, sizeof(path), "%s/wiliwili-title.log", directory) >= sizeof(path))
         return NULL;
     {
+        // An earlier diagnostic build wrote a second log next to this one.
+        // Nothing writes it any more, and the console offers no way to delete
+        // it from outside, so it only holds space on the card: drop it the next
+        // time the title runs.
+        char stale[256];
+        if ((size_t)snprintf(stale, sizeof(stale), "%s/logprobe.log", directory) < sizeof(stale))
+            (void)unlink(stale);
+    }
+    {
         struct stat info;
         if (stat(path, &info) == 0 && info.st_size >= WILIWILI_LOG_ROTATE_BYTES) {
             char previous[272];
