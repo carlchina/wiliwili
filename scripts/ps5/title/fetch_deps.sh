@@ -17,16 +17,18 @@
 # Usage:
 #   scripts/ps5/title/fetch_deps.sh [PREFIX]
 #
-# PREFIX defaults to $PS5_DEPS_PREFIX or ~/.local/opt, the directory
-# scripts/ps5/install_sdk.sh already uses for the payload SDK.
+# PREFIX defaults to $PS5_DEPS_PREFIX or ~/.cache/wiliwili-ps5/ps5-deps. It is
+# a cache and not a temporary directory: macOS clears the temporary one, and
+# the OpenGL SDK and the clean-room runtime that live there are not easy to
+# get back.
 #
 # Environment:
-#   PS5_DEPS_PREFIX    where the dependencies live (default ~/.local/opt)
+#   PS5_DEPS_PREFIX    where the dependencies live (default ~/.cache/wiliwili-ps5/ps5-deps)
 #   PS5_OPENGGL_VERSION  ps5-opengl release to use (default v1.0.2)
 
 set -euo pipefail
 
-prefix=${1:-${PS5_DEPS_PREFIX:-${HOME}/.local/opt}}
+prefix=${1:-${PS5_DEPS_PREFIX:-${HOME}/.cache/wiliwili-ps5/ps5-deps}}
 opengl_version=${PS5_OPENGGL_VERSION:-v1.0.2}
 opengl_commit=a519561626933257213d64a4a8bd5e02b55dceb2
 opengl_sdk_sha256=30d8e51dd062739b629346102be5932728ba714bc50b1bdcdf08306c8843d9a4
@@ -138,7 +140,8 @@ chmod +x "${prefix}/ps5-native-app-boilerplate/tooling/prospero-clang18"
 
 # SDL2 stays a git checkout: the ps5-opengl builder archives the pinned commit
 # with git to verify it, which a plain source tarball cannot satisfy
-fetch_repo https://github.com/libsdl-org/SDL.git "${sdl_commit}" "${prefix}/SDL2"
+# The commit is in the console's fork of SDL, not in the upstream repository.
+fetch_repo https://github.com/carlchina/SDL.git "${sdl_commit}" "${prefix}/SDL2"
 
 cat >&2 <<EOF
 
