@@ -398,7 +398,7 @@
         "skip_hint3": "Use custom opening credits from next video",
         "skip_hint4": "Disable custom opening credits from next video",
         "wiki": "Access our wiki to learn how shader works",
-        "video_info": "Show the parameters of the video on the video"
+        "video_info": "Show video parameters"
       },
       "season": {
         "aspect": "Custom video aspect",
