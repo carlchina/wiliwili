@@ -66,7 +66,10 @@ int main(int argc, char* argv[]) {
     // A watch over the main loop: a title that stops answering does not
     // write anything itself, so the watch says where it stopped.
     stage::startWatch();
-    brls::Application::getRunLoopEvent()->subscribe([]() { stage::tick(); });
+    brls::Application::getRunLoopEvent()->subscribe([]() {
+        stage::Marker marker("run loop");
+        stage::tick();
+    });
 
     // Return directly to the desktop when closing the application (only for NX)
     brls::Application::getPlatform()->exitToHomeMode(true);

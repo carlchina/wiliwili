@@ -37,13 +37,15 @@ inline void tick()
 }
 
 /**
- * Names the place the interface is in, until it goes out of scope.
+ * Names the place the interface is in.
+ *
+ * The name stays when the place is left: a title that stops says where it was
+ * last, which is the closest hint a watch can give.
  */
 class Marker
 {
   public:
     explicit Marker(const char* name) { current.store(name, std::memory_order_relaxed); }
-    ~Marker() { current.store("", std::memory_order_relaxed); }
 
     Marker(const Marker&)            = delete;
     Marker& operator=(const Marker&) = delete;

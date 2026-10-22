@@ -858,6 +858,9 @@ bool MPVCore::isValid() { return mpv_context != nullptr; }
 
 void MPVCore::draw(brls::Rect area, float alpha) {
     if (mpv_context == nullptr) return;
+    // The picture is put on the screen in two steps: the frame is resized to
+    // the place the picture takes, and then the texture is drawn.
+    stage::Marker marker("video draw");
     if (!(this->rect == area)) setFrameSize(area);
 
 #ifdef MPV_SW_RENDER
@@ -932,7 +935,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     }
 #else
     // OpenGL 将 FBO 绘制到屏幕上
-    stage::Marker marker("video draw");
     glUseProgram(shader.prog);
     // The sampler of the shader reads the first unit, so the picture is put
     // there: the unit that is active belongs to whoever drew before.

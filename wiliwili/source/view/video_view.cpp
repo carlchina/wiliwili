@@ -23,6 +23,7 @@
 #include "fragment/player_setting.hpp"
 #include "fragment/player_dlna_search.hpp"
 #include "view/video_view.hpp"
+#include "utils/stage.hpp"
 
 #include "utils/shortcut_helper.hpp"
 #include "view/live_core.hpp"
@@ -665,6 +666,7 @@ void VideoView::updateVideoInfo() {
 void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height, brls::Style style,
                      brls::FrameContext* ctx) {
     if (!mpvCore->isValid()) return;
+    stage::Marker marker("player draw");
 
     // The parameters on the video itself, refreshed once a second.
     if (SHOW_VIDEO_INFO) {
