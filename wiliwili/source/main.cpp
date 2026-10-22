@@ -21,6 +21,11 @@
 #include <SDL2/SDL_main.h>
 #endif
 
+#ifdef PS5
+// The console unloads a title through its system service.
+extern "C" int sceSystemServiceLoadExec(const char* path, const char* argv[]);
+#endif
+
 int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-d") == 0) {
@@ -131,6 +136,15 @@ int main(int argc, char* argv[]) {
 
     // Cleanup curl and Check whether restart is required
     ProgramConfig::instance().exit(argv);
+
+#ifdef PS5
+    // The console unloads a title through its system service. Without this
+    // call the title's window stays on the screen and the console shows a
+    // black frame instead of the home screen - the console's own dialog
+    // asks whether to close the program, and then nothing happens.
+    brls::Logger::info("leaving the title");
+    sceSystemServiceLoadExec("exit", nullptr);
+#endif
 
     // Exit
     return EXIT_SUCCESS;

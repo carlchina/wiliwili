@@ -493,6 +493,15 @@ void MPVCore::init() {
     check_error(mpvObserveProperty(mpv, 19, "saturation", MPV_FORMAT_DOUBLE));
     check_error(mpvObserveProperty(mpv, 20, "gamma", MPV_FORMAT_DOUBLE));
     check_error(mpvObserveProperty(mpv, 21, "hue", MPV_FORMAT_DOUBLE));
+    // 播放中视频的参数：只靠通知维护，界面不再直接向 mpv 询问（会等播放线程）
+    check_error(mpvObserveProperty(mpv, 22, "video-codec", MPV_FORMAT_STRING));
+    check_error(mpvObserveProperty(mpv, 23, "video-params/pixelformat", MPV_FORMAT_STRING));
+    check_error(mpvObserveProperty(mpv, 24, "video-params/w", MPV_FORMAT_INT64));
+    check_error(mpvObserveProperty(mpv, 25, "video-params/h", MPV_FORMAT_INT64));
+    check_error(mpvObserveProperty(mpv, 26, "container-fps", MPV_FORMAT_DOUBLE));
+    check_error(mpvObserveProperty(mpv, 27, "video-bitrate", MPV_FORMAT_INT64));
+    check_error(mpvObserveProperty(mpv, 28, "frame-drop-count", MPV_FORMAT_INT64));
+    check_error(mpvObserveProperty(mpv, 29, "avsync", MPV_FORMAT_DOUBLE));
 
     // init renderer params
 #ifdef MPV_SW_RENDER
@@ -1219,6 +1228,10 @@ void MPVCore::eventMainLoop() {
                     case 15:
                         if (data) {
                             hwCurrent = *(char **)data;
+                            {
+                                std::lock_guard<std::mutex> lock(videoInfoMutex);
+                                videoInfo.hwdec = hwCurrent;
+                            }
                             brls::Logger::info("========> HW: {}", hwCurrent);
                             GA("hwdec", {{"hwdec", hwCurrent}})
                         }
@@ -1240,6 +1253,55 @@ void MPVCore::eventMainLoop() {
                         break;
                     case 21:
                         if (data) video_hue = *(double *)data;
+                        break;
+                    case 22:
+                        {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            // 没有视频时 mpv 发来空值，界面据此隐藏这些参数
+                            videoInfo.codec = data ? *(char **)data : "";
+                        }
+                        break;
+                    case 23:
+                        {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.pixelFormat = data ? *(char **)data : "";
+                        }
+                        break;
+                    case 24:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.width = *(int64_t *)data;
+                        }
+                        break;
+                    case 25:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.height = *(int64_t *)data;
+                        }
+                        break;
+                    case 26:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.fps = *(double *)data;
+                        }
+                        break;
+                    case 27:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.bitrate = *(int64_t *)data;
+                        }
+                        break;
+                    case 28:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.droppedFrames = *(int64_t *)data;
+                        }
+                        break;
+                    case 29:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.avsync = *(double *)data;
+                        }
                         break;
                     default:
                         break;
@@ -1424,6 +1486,11 @@ int64_t MPVCore::getInt(const std::string &key) {
     int64_t value = 0;
     mpvGetProperty(mpv, key.c_str(), MPV_FORMAT_INT64, &value);
     return value;
+}
+
+MPVCore::VideoInfo MPVCore::getVideoInfo() {
+    std::lock_guard<std::mutex> lock(videoInfoMutex);
+    return videoInfo;
 }
 
 std::unordered_map<std::string, mpv_node> MPVCore::getNodeMap(const std::string &key) {

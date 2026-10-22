@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <cstdlib>
+#include <mutex>
 #include <fmt/format.h>
 #include <borealis/core/geometry.hpp>
 #include <borealis/core/singleton.hpp>
@@ -160,6 +161,26 @@ public:
     std::string getString(const std::string &key);
     double getDouble(const std::string &key);
     int64_t getInt(const std::string &key);
+
+    /**
+     * 正在播放的视频的参数，由 mpv 自己的通知维护。
+     *
+     * 直接向 mpv 询问这些参数要等播放线程，解码忙的时候会把界面卡住，
+     * 所以这里读的是 mpv 最近一次通知过来的值。
+     */
+    struct VideoInfo {
+        std::string codec;
+        std::string pixelFormat;
+        std::string hwdec;
+        int64_t width        = 0;
+        int64_t height       = 0;
+        double fps           = 0;
+        int64_t bitrate      = 0;
+        int64_t droppedFrames = 0;
+        double avsync        = 0;
+    };
+
+    VideoInfo getVideoInfo();
     std::unordered_map<std::string, mpv_node> getNodeMap(const std::string &key);
 
     /// Set MPV States
@@ -341,6 +362,10 @@ public:
     int mpv_error_code     = 0;
     std::string hwCurrent;
     std::string filepath;
+
+    // 视频参数（由 mpv 的属性通知更新，见 getVideoInfo）
+    VideoInfo videoInfo;
+    std::mutex videoInfoMutex;
     std::string currentShaderProfile;                      // 当前着色器脚本名
     std::string currentShader;                             // 当前着色器脚本
     std::vector<std::vector<std::string>> currentSetting;  // 当前着色器脚本附加的mpv配置

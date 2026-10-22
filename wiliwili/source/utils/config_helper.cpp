@@ -1121,7 +1121,11 @@ void ProgramConfig::init() {
 
     if (access(brls::FontLoader::USER_ICON_PATH.c_str(), F_OK) == -1) {
         // 自定义字体不存在，使用内置字体
-#if defined(__PSV__) || defined(PS4) || defined(PS5)
+#if defined(PS5)
+        // The DualSense has no Share button and its Options button is drawn
+        // with three lines, so the PS4 icon set is not the right one.
+        brls::FontLoader::USER_ICON_PATH = BRLS_ASSET("font/keymap_ps5.ttf");
+#elif defined(__PSV__) || defined(PS4)
         brls::FontLoader::USER_ICON_PATH = BRLS_ASSET("font/keymap_ps.ttf");
 #else
         std::string icon = getSettingItem(SettingItem::KEYMAP, std::string{"xbox"});
