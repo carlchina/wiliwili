@@ -35,3 +35,7 @@ android-project
 CLAUDE.md
 # Other AI
 AGENT.md
+
+# Python
+__pycache__/
+*.pyc
