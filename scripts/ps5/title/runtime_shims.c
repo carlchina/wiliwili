@@ -46,6 +46,14 @@ __attribute__((noreturn)) void catchReturnFromMain(int status)
  * title's private data area next to /app0 and is used if that directory cannot
  * be created.
  */
+/**
+ * The log lives on the console's storage and nothing ever deletes it: every
+ * launch appends to the same file. Keep it bounded by moving the file aside
+ * when it grows past this size, so the directory holds one recent log and one
+ * previous one instead of a file that grows with every session.
+ */
+#define WILIWILI_LOG_ROTATE_BYTES (8 * 1024 * 1024)
+
 static FILE *wiliwili_log_open(const char *directory)
 {
     if (mkdir(directory, 0755) != 0 && errno != EEXIST)
@@ -53,6 +61,14 @@ static FILE *wiliwili_log_open(const char *directory)
     char path[256];
     if ((size_t)snprintf(path, sizeof(path), "%s/wiliwili-title.log", directory) >= sizeof(path))
         return NULL;
+    {
+        struct stat info;
+        if (stat(path, &info) == 0 && info.st_size >= WILIWILI_LOG_ROTATE_BYTES) {
+            char previous[272];
+            if ((size_t)snprintf(previous, sizeof(previous), "%s.1", path) < sizeof(previous))
+                (void)rename(path, previous);  // replaces the older copy
+        }
+    }
     // Append-only writes on both streams keep the file free of two-writer
     // offset races: every write lands at end-of-file, so lines never clobber
     // each other.

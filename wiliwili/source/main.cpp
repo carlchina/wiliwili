@@ -44,6 +44,9 @@ int main(int argc, char* argv[]) {
     // The console title cannot take command line options; keep a debug log to
     // diagnose the remaining network layers through the crash reporter fetch.
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
+    // The log is a file on the console's storage and nothing removes it: bound
+    // it so a long session cannot fill the drive with debug lines.
+    brls::Logger::setLogFileLimit(16 * 1024 * 1024);
     // The queue the console's hardware video decoder runs on has to be made
     // before the application asks for full access, and the crash reporter has
     // to be there to say what went wrong.
