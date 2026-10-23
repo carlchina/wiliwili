@@ -89,11 +89,20 @@ hbmenu 自行选择路径。
 
 ### PS5
 
-下载 `wiliwili-PS5-*-title.zip`，解压至 PS5 主机的 `/data/homebrew/` 目录下（完整路径为 `/data/homebrew/PPSA99099/`）：[wiliwili releases](https://github.com/carlchina/wiliwili/releases)
+下载 `wiliwili-PS5-v1.6.0.zip`，解压至 PS5 主机的 `/data/homebrew/` 目录下（完整路径为 `/data/homebrew/PPSA99099/`）：[wiliwili releases](https://github.com/carlchina/wiliwili/releases)
 
 重新加载 ShadowMountPlus（或重启主机），即可直接在 PS5 主屏幕启动 wiliwili 原生应用（也可以运行 `scripts/ps5/title/deploy.sh -h <PS5 的 IP>` 自动上传并刷新）。
 
-只支持软解，PS5 CPU 性能充沛，可流畅播放 1080P / 4K 视频。
+> [!IMPORTANT]
+> **运行环境要求**：
+> 1. 请使用 [ShadowMountPlus 1.7beta6 或更高版本](https://github.com/drakmor/ShadowMountPlus/releases)
+> 2. 请配合最新版本的 **kstuff** 使用
+
+#### PS5 版本特性
+- **🎮 DualSense 手柄深度适配**：完整支持 PlayStation 原生键位规范（✕ 确认、○ 返回、△ 快捷搜索、□ 弹幕开关），支持手柄摇杆与 D-Pad 平滑导航以及手柄震动。
+- **⌨️ 电视大屏搜索与键盘输入**：内置专为大屏手柄设计的拼音/英文虚拟键盘，同时支持直连 PS5 USB 外接实体键盘输入。
+- **📺 影音与弹幕体验**：基于 mpv + FFmpeg 充沛性能软解，流畅播放 1080P60 与 4K 高画质；内置 NanoVG 硬件加速高帧率弹幕系统。
+- **🛡️ 原生系统级集成**：Native Title 原生桌面应用（Title ID: `PPSA99099`），支持屏幕 Toast 异常诊断系统。
 
 ### PC
 
