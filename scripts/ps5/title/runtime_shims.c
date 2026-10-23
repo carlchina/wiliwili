@@ -153,6 +153,59 @@ extern int wiliwili_videodec2_prepare(void);
 extern int wiliwili_ps5_decoder_prepare(void);
 static void wiliwili_report_memory(void);
 
+extern int sceKernelSendNotificationRequest(uint32_t device, void *request, size_t size, int blocking);
+
+struct WiliwiliNotificationRequest {
+    uint8_t reserved[45];
+    char message[3075];
+};
+
+void wiliwili_ps5_notify(const char *message)
+{
+    if (!message)
+        return;
+    struct WiliwiliNotificationRequest request;
+    memset(&request, 0, sizeof(request));
+    snprintf(request.message, sizeof(request.message), "%s", message);
+    (void)sceKernelSendNotificationRequest(0, &request, sizeof(request), 0);
+}
+
+#define EBOOT_BASE 0x400000ULL
+
+static void wiliwili_check_imports(void)
+{
+    FILE *f = fopen("/app0/imports.txt", "r");
+    if (!f)
+        f = fopen("imports.txt", "r");
+    if (!f)
+        return;
+
+    char name[128];
+    unsigned long offset;
+    int checked = 0, missing = 0;
+    char missing_list[256] = "";
+
+    while (fscanf(f, "%lx %127s", &offset, name) == 2) {
+        checked++;
+        if (*(const uint64_t *)(EBOOT_BASE + offset) == 0) {
+            fprintf(stderr, "[wiliwili] unresolved import: %s (offset 0x%lx)\n", name, offset);
+            if (missing < 5) {
+                if (missing > 0)
+                    strncat(missing_list, " ", sizeof(missing_list) - strlen(missing_list) - 1);
+                strncat(missing_list, name, sizeof(missing_list) - strlen(missing_list) - 1);
+            }
+            missing++;
+        }
+    }
+    fclose(f);
+    fprintf(stderr, "[wiliwili] imports check: %d of %d unresolved\n", missing, checked);
+    if (missing > 0) {
+        char toast[300];
+        snprintf(toast, sizeof(toast), "wiliwili: %d unresolved imports: %s", missing, missing_list);
+        wiliwili_ps5_notify(toast);
+    }
+}
+
 __attribute__((constructor)) static void wiliwili_open_log(void)
 {
     wiliwili_mark("crt");
@@ -165,6 +218,8 @@ __attribute__((constructor)) static void wiliwili_open_log(void)
         }
     }
     wiliwili_mark(opened);
+
+    wiliwili_check_imports();
 
     char line[64];
     (void)snprintf(line, sizeof(line), "decoder: %d", wiliwili_videodec2_prepare());

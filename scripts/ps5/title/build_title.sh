@@ -419,6 +419,10 @@ echo "==> [title] Converting and signing"
 echo "==> [title] Assembling $out_dir"
 rm -rf -- "$out_dir"
 mkdir -p "$out_dir/sce_sys" "$out_dir/sce_module"
+echo "==> [title] Generating imports.txt"
+"$llvm_bin/llvm-readelf" -r --wide "$work_dir/llvm-pie.elf" |
+    awk '$3 == "R_X86_64_GLOB_DAT" || $3 == "R_X86_64_JUMP_SLOT" { print $1, $5 }' \
+    > "$out_dir/imports.txt"
 "$PS5_NATIVE_TOOL" self --sign --in "$work_dir/eboot.elf" --out "$out_dir/eboot.bin" \
     --magic "$fself_magic"
 # The title's identity: the console sizes the memory a title may use by its

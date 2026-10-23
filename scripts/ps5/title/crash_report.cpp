@@ -32,6 +32,7 @@ extern "C"
     int sceKernelDebugOutText(int channel, const char *text);
     int sceKernelUsleep(unsigned microseconds);
     std::uint64_t sceKernelGetProcessTime(void);
+    void wiliwili_ps5_notify(const char *message);
     // The app's code, from the link (scripts/ps5/title/ps5-pie.ld).
     extern const char __wiliwili_text_start[];
     extern const char __wiliwili_text_end[];
@@ -326,6 +327,14 @@ void Handler(int signal, siginfo_t *info, void *context)
         if (g_log_file >= 0)
             (void)write(g_log_file, g_text.data, g_text.size);
         (void)sceKernelDebugOutText(0, "[wiliwili] crash report written to crash-last.txt\n");
+
+        char toast[128];
+        const std::uint64_t rip = m[20];
+        const std::uint64_t rip_offset = (rip >= CodeStart() && rip < CodeEnd()) ? (rip - CodeStart()) : rip;
+        std::snprintf(toast, sizeof(toast), "wiliwili: crash %s (sig %d) at eboot+0x%llx",
+                      kind ? kind->name : "signal", signal, static_cast<unsigned long long>(rip_offset));
+        wiliwili_ps5_notify(toast);
+
         g_reporting.store(2);
     }
     else
@@ -376,11 +385,19 @@ void Install(const char *logs_dir, int log_file)
         if (write(g_probe[1], &byte, 1) == 1)
             (void)read(g_probe[0], &byte, 1);
     }
+
+    static uint8_t g_alt_stack[64 * 1024] __attribute__((aligned(16)));
+    stack_t ss{};
+    ss.ss_sp = g_alt_stack;
+    ss.ss_size = sizeof(g_alt_stack);
+    ss.ss_flags = 0;
+    sigaltstack(&ss, nullptr);
+
     struct sigaction action
     {
     };
     action.sa_sigaction = Handler;
-    action.sa_flags = SA_SIGINFO;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&action.sa_mask);
     int installed = 0;
     for (const Kind &kind : kKinds)

@@ -30,6 +30,8 @@ extern "C" int wiliwili_console_log;
 extern "C" void wiliwili_mark(const char *stage);
 // Microsecond sleep used by the spin-loops that keep the process alive.
 extern "C" int sceKernelUsleep(unsigned microseconds);
+// Shows on-screen system notification (runtime_shims.c).
+extern "C" void wiliwili_ps5_notify(const char *message);
 #endif
 
 int main(int argc, char* argv[]) {
@@ -91,6 +93,7 @@ int main(int argc, char* argv[]) {
         // stays readable (the same pattern as catchReturnFromMain in
         // scripts/ps5/title/runtime_shims.c).
         wiliwili_mark("init failed");
+        wiliwili_ps5_notify("wiliwili: Application::init() failed! Check logs.");
         fflush(nullptr);
         for (;;)
             sceKernelUsleep(100000);
