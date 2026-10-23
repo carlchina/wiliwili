@@ -140,6 +140,8 @@
       "repository": "저장소",
       "brief": "또 다른 타사 bilibili 클라이언트",
       "repo_header": "저장소",
+      "port_header": "PS5 이식",
+      "port": "PS5 네이티브 버전은 carlchina가 이식 및 유지보수합니다\nhttps://github.com/carlchina",
       "author_header": "제작자의 말",
       "author": "항상 예술가가 되고 싶었지만 안타깝게도 프로그래머를 위한 자리가 많지 않습니다.\n이 작품이 탄생하고 실현되기까지:「게임 콘솔에서 비디오 보기, 휴대폰에서 게임하기」\n일종의 공연 예술이라고 할 수 있을지도 모르겠지만, 나는 완성 될 것입니다."
     },
