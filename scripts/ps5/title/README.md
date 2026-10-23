@@ -60,9 +60,11 @@ The whole pipeline is four commands. `fetch_deps.sh` downloads about 700 MB
 #    the native app boilerplate, SDL2 at the pinned commit
 scripts/ps5/title/fetch_deps.sh
 
-# 2. the module converter, and the static SDL2 (audio enabled)
+# 2. the module converter, the static SDL2 (audio enabled), and the resource
+#    generator, which turns resources/ into C++ and has to run on this machine
 scripts/ps5/title/build_native_tool.sh
 scripts/ps5/title/build_sdl2.sh
+library/borealis/build_libromfs_generator.sh
 
 # 3. compile the application with the payload toolchain (about 15 minutes),
 #    then link, convert and sign it

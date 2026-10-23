@@ -144,6 +144,13 @@ jobs:
       - name: Build the static SDL2
         run: scripts/ps5/title/build_sdl2.sh
 
+      # The resources are embedded in the image, and the generator that turns
+      # them into C++ runs on the host: borealis compiles it with the console
+      # toolchain unless a prebuilt one sits in its directory, so it is built
+      # here first.
+      - name: Build the resource generator
+        run: bash library/borealis/build_libromfs_generator.sh
+
       # The clean-room runtime module the title loads beside its image is
       # generated from the boilerplate's own sources, not shipped with it.
       - name: Build the runtime module
