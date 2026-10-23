@@ -26,9 +26,14 @@
 extern "C" int sceSystemServiceLoadExec(const char* path, const char* argv[]);
 // The handle the platform kept for the console's own log (runtime_shims.c).
 extern "C" int wiliwili_console_log;
+// Writes how far the start-up got, before the log can be written (runtime_shims.c).
+extern "C" void wiliwili_mark(const char *stage);
 #endif
 
 int main(int argc, char* argv[]) {
+#ifdef PS5
+    wiliwili_mark("main");
+#endif
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-d") == 0) {
             brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
@@ -61,6 +66,9 @@ int main(int argc, char* argv[]) {
 
     // Load cookies and settings
     ProgramConfig::instance().init();
+#ifdef PS5
+    wiliwili_mark("config");
+#endif
 
 #ifdef PS5
     // The console's hardware video decoder, with the test streams that ship
@@ -76,6 +84,9 @@ int main(int argc, char* argv[]) {
         brls::Logger::error("Unable to init application");
         return EXIT_FAILURE;
     }
+#ifdef PS5
+    wiliwili_mark("application");
+#endif
 
     // A watch over the main loop: a title that stops answering does not
     // write anything itself, so the watch says where it stopped.
@@ -90,6 +101,9 @@ int main(int argc, char* argv[]) {
 
     brls::Application::createWindow("wiliwili");
     brls::Logger::info("createWindow done");
+#ifdef PS5
+    wiliwili_mark("window");
+#endif
 
     // Register custom view\theme\style
     Register::initCustomView();
@@ -100,6 +114,9 @@ int main(int argc, char* argv[]) {
 
     if (brls::Application::getPlatform()->isApplicationMode()) {
         Intent::openMain();
+#ifdef PS5
+        wiliwili_mark("main intent");
+#endif
         // Uncomment these lines to debug activities
         //        Intent::openBV("BV1Da411Y7U4");  // 弹幕防遮挡 (横屏)
         //        Intent::openBV("BV1iN4y1m7J3");  // 弹幕防遮挡 (竖屏)

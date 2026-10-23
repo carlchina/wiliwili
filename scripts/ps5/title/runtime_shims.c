@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 extern int sceKernelUsleep(uint32_t microseconds);
@@ -55,20 +56,24 @@ __attribute__((noreturn)) void catchReturnFromMain(int status)
 #define WILIWILI_LOG_ROTATE_BYTES (8 * 1024 * 1024)
 
 /**
- * The handle the console's own log collects.
+ * Where the console's own log would be read back.
  *
- * Moving stdout and stderr into the file below takes away the only stream the
- * console had. A copy of it is kept here so that the warnings and errors of a
- * session reach the console's log while they happen - what a log server on the
- * network reads, and the only thing that survives when the title dies without
- * reaching the file.
+ * Kept at -1: a title cannot duplicate its console handle (the console answers
+ * that call as an illegal function call and stops the process), and the kernel
+ * log of this console cannot be read either way.
  */
 int wiliwili_console_log = -1;
 
+// Defined below; the log's own steps are marked so a session that stops inside
+// them says which call it reached.
+void wiliwili_mark(const char *stage);
+
 static FILE *wiliwili_log_open(const char *directory)
 {
+    wiliwili_mark("log: mkdir");
     if (mkdir(directory, 0755) != 0 && errno != EEXIST)
         return NULL;
+    wiliwili_mark("log: mkdir done");
     char path[256];
     if ((size_t)snprintf(path, sizeof(path), "%s/wiliwili-title.log", directory) >= sizeof(path))
         return NULL;
@@ -81,6 +86,7 @@ static FILE *wiliwili_log_open(const char *directory)
         if ((size_t)snprintf(stale, sizeof(stale), "%s/logprobe.log", directory) < sizeof(stale))
             (void)unlink(stale);
     }
+    wiliwili_mark("log: unlink done");
     {
         struct stat info;
         if (stat(path, &info) == 0 && info.st_size >= WILIWILI_LOG_ROTATE_BYTES) {
@@ -89,17 +95,53 @@ static FILE *wiliwili_log_open(const char *directory)
                 (void)rename(path, previous);  // replaces the older copy
         }
     }
+    wiliwili_mark("log: stat done");
     // Append-only writes on both streams keep the file free of two-writer
     // offset races: every write lands at end-of-file, so lines never clobber
     // each other.
-    wiliwili_console_log = dup(STDERR_FILENO);
     FILE *stream = freopen(path, "a", stdout);
+    wiliwili_mark(stream == NULL ? "log: stdout failed" : "log: stdout redirected");
     if (stream == NULL)
         return NULL;
     setvbuf(stream, NULL, _IOLBF, 0);
     if (freopen(path, "a", stderr) != NULL)
         setvbuf(stderr, NULL, _IOLBF, 0);
+    wiliwili_mark("log: stderr redirected");
     return stream;
+}
+
+/**
+ * Says how far the start-up got.
+ *
+ * A title that the system stops before it writes anything leaves no log at
+ * all: the log file is only reached once the application prints its first
+ * line. This writes to a file of its own as soon as the first stage is set, so
+ * a session that ends in the first moments still says which step it reached.
+ */
+void wiliwili_mark(const char *stage)
+{
+    static int handle = -2;  // -2: not opened yet, -1: nowhere to write
+    static struct timespec first;
+    if (handle == -2) {
+        clock_gettime(CLOCK_MONOTONIC, &first);
+        handle = open("/data/wiliwili/startup.txt", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (handle < 0)
+            handle = open("/download0/startup.txt", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (handle < 0)
+            handle = -1;
+    }
+    if (handle < 0 || stage == NULL)
+        return;
+    // The elapsed time separates "stopped at this call" from "the system
+    // stopped the title while it was here".
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    const long ms = (now.tv_sec - first.tv_sec) * 1000 + (now.tv_nsec - first.tv_nsec) / 1000000;
+    char line[192];
+    const int length = snprintf(line, sizeof(line), "%6ld ms  %s\n", ms, stage);
+    if (length <= 0)
+        return;
+    (void)!write(handle, line, (size_t)length < sizeof(line) ? (size_t)length : sizeof(line) - 1);
 }
 
 /**
@@ -113,14 +155,22 @@ static void wiliwili_report_memory(void);
 
 __attribute__((constructor)) static void wiliwili_open_log(void)
 {
+    wiliwili_mark("crt");
     const char *directories[] = {"/data/wiliwili", "/download0", NULL};
+    const char *opened = "log: none";
     for (size_t i = 0; directories[i] != NULL; ++i) {
-        if (wiliwili_log_open(directories[i]) != NULL)
+        if (wiliwili_log_open(directories[i]) != NULL) {
+            opened = directories[i];
             break;
+        }
     }
+    wiliwili_mark(opened);
 
-    wiliwili_videodec2_prepare();
+    char line[64];
+    (void)snprintf(line, sizeof(line), "decoder: %d", wiliwili_videodec2_prepare());
+    wiliwili_mark(line);
     wiliwili_report_memory();
+    wiliwili_mark("crt done");
 }
 
 /**
