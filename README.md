@@ -89,17 +89,11 @@ hbmenu 自行选择路径。
 
 ### PS5
 
-在已破解的 PS5 上以 homebrew 应用的形式运行，启动前需要先加载 [websrv](https://github.com/ps5-payload-dev/websrv)（内含 ftpsrv 与 hbldr）。
+下载 `wiliwili-PS5-*-title.zip`，解压至 PS5 主机的 `/data/homebrew/` 目录下（完整路径为 `/data/homebrew/PPSA99099/`）：[wiliwili releases](https://github.com/carlchina/wiliwili/releases)
 
-1. 将编译产物 `cmake-build-ps5/ps5` 目录中的全部内容上传到 `/data/homebrew/wiliwili/`
-   （也可以直接运行 `scripts/ps5/deploy.sh -h <PS5 的 IP>` 自动上传并启动）
-2. 用浏览器打开 `http://<PS5 的 IP>:8080/`，应用列表中点 wiliwili 即可启动
+重新加载 ShadowMountPlus（或重启主机），即可直接在 PS5 主屏幕启动 wiliwili 原生应用（也可以运行 `scripts/ps5/title/deploy.sh -h <PS5 的 IP>` 自动上传并刷新）。
 
-websrv 首次运行会在主屏幕添加 "Homebrew Launcher" 入口，点开就是同一个应用列表；如果想让 wiliwili 单独拥有一个主屏幕入口，执行一次
-`scripts/ps5/install_tile.sh -h <PS5 的 IP>`（入口是 websrv 提供的 wiliwili 启动页的 deeplink，不需要 kstuff 的 fPKG 支持）。
-把 wiliwili 直接打包成 fPKG 安装的方式还是实验性的，见 [scripts/ps5/README.md](scripts/ps5/README.md)。
-
-只支持软解。
+只支持软解，PS5 CPU 性能充沛，可流畅播放 1080P / 4K 视频。
 
 ### PC
 

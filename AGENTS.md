@@ -257,11 +257,12 @@ export LLVM_CONFIG=$(brew --prefix llvm@18)/bin/llvm-config
 
 scripts/ps5/install_sdk.sh          # downloads the ~220MB ps5-payload-dev sysroot
 scripts/build_ps5.sh                # builds libmpv (once) + wiliwili
-# result: cmake-build-ps5/ps5/{wiliwili.elf,resources,homebrew.js,sce_sys}
-scripts/ps5/deploy.sh -h <ps5-ip>   # upload to /data/homebrew/wiliwili + launch via websrv
+# native title build (PPSA99099):
+# see scripts/ps5/title/README.md for full native title pipeline
+scripts/ps5/title/deploy.sh -h <ps5-ip>   # upload PPSA99099 to /data/homebrew/PPSA99099
 ```
-`PS5_PAYLOAD_SDK` points at an existing SDK to skip the download. wiliwili is a payload ELF
-(no `.pkg`), so it runs on a jailbroken console through ps5-payload-dev's `websrv`/`elfldr`.
+`PS5_PAYLOAD_SDK` points at an existing SDK to skip the download. wiliwili runs as a native
+homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
 
 ### Useful CMake flags
 | Flag | Purpose |
