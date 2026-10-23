@@ -25,6 +25,7 @@ android-project
 *.deb
 *.dmp
 /dist/
+/dist-citest/
 # Github Copilot
 .github/copilot-instructions.md
 .github/instructions/
