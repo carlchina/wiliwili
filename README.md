@@ -179,10 +179,16 @@ PC客户端支持切换硬件解码、秒开流畅适合老电脑、支持鼠标
 2. [Switch用户] 要确保 `大气层`和`系统固件` 更新到 **最新** ，`内存卡`为 **FAT32**
 3. [Switch用户] 如果打开应用黑屏时间过长，可以尝试删除内存卡目录 `config/wiliwili` 重新进入
 4. [PS5用户] 运行原生 Title 需要使用 [ShadowMountPlus 1.7beta6 以上版本](https://github.com/drakmor/ShadowMountPlus/releases) 以及最新版本 kstuff
-5. 确保 `系统时间`正确、系统`网络设置`正确（主要是DNS）、如果使用了`网络代理`请在反馈前关闭并重新测试
-6. 查找有没有其他人出现过类似的问题：[Issues](https://github.com/xfangfang/wiliwili/issues?q=is%3Aissue)
-7. **完整且详细地** 描述你的问题，最好附加演示视频、截图。
-8. 尝试复现问题，尽力找到BUG出现的规律
+5. **[PS5用户提交 Bug 须知]** 为快速定位和修复问题，请务必提供以下信息：
+   - **固件与破解环境**：PS5 固件版本（如 FW 4.50 / 8.20 / 11.60）、ShadowMountPlus 版本、kstuff 版本/Payload 类型。
+   - **错误现象与屏幕提示**：闪退/卡死时的具体表现，特别是**屏幕弹出的 Toast 报错截图或拍照**（包含 `stage` 阶段、`caller` 地址、信号类型如 `SIGSEGV`/`SIGABRT` 等关键崩溃诊断信息）。
+   - **日志文件**：ShadowMount 的运行日志（如 U盘或系统目录下的 `debug.log`），以及 `/data/wiliwili/` 目录下的相关文件。
+   - **复现步骤**：启动闪退还是特定操作触发？如播放闪退请附上具体视频的 **BV号** 或番剧集数、画质（1080P/4K）与是否开启弹幕。
+   - **外设配置**：使用的控制器型号（DualSense / 第三方）及是否外接 USB 实体键盘。
+6. 确保 `系统时间`正确、系统`网络设置`正确（主要是DNS）、如果使用了`网络代理`请在反馈前关闭并重新测试
+7. 查找有没有其他人出现过类似的问题：[Issues](https://github.com/xfangfang/wiliwili/issues?q=is%3Aissue)
+8. **完整且详细地** 描述你的问题，最好附加演示视频、截图。
+9. 尝试复现问题，尽力找到BUG出现的规律
 
 
 <br>
