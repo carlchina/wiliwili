@@ -137,7 +137,13 @@ the loader says before it (for example `Need_sceKernelSys`), and
 ```bash
 scripts/ps5/title/log.sh -h <console>          # application log, then the kernel log
 scripts/ps5/title/log.sh -h <console> -o run.log
+scripts/ps5/title/log.sh -h <console> -f       # follow the kernel log while testing
 ```
+
+Warnings and errors are written to the console's own log as well
+(`Logger::setConsoleLogHandle`), so the kernel log shows them while the title
+runs - which is also the only trace left when it stops before its file log is
+flushed.
 
 The two sources by hand, when the helper is not at hand:
 

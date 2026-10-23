@@ -54,6 +54,17 @@ __attribute__((noreturn)) void catchReturnFromMain(int status)
  */
 #define WILIWILI_LOG_ROTATE_BYTES (8 * 1024 * 1024)
 
+/**
+ * The handle the console's own log collects.
+ *
+ * Moving stdout and stderr into the file below takes away the only stream the
+ * console had. A copy of it is kept here so that the warnings and errors of a
+ * session reach the console's log while they happen - what a log server on the
+ * network reads, and the only thing that survives when the title dies without
+ * reaching the file.
+ */
+int wiliwili_console_log = -1;
+
 static FILE *wiliwili_log_open(const char *directory)
 {
     if (mkdir(directory, 0755) != 0 && errno != EEXIST)
@@ -81,6 +92,7 @@ static FILE *wiliwili_log_open(const char *directory)
     // Append-only writes on both streams keep the file free of two-writer
     // offset races: every write lands at end-of-file, so lines never clobber
     // each other.
+    wiliwili_console_log = dup(STDERR_FILENO);
     FILE *stream = freopen(path, "a", stdout);
     if (stream == NULL)
         return NULL;

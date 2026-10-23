@@ -24,6 +24,8 @@
 #ifdef PS5
 // The console unloads a title through its system service.
 extern "C" int sceSystemServiceLoadExec(const char* path, const char* argv[]);
+// The handle the platform kept for the console's own log (runtime_shims.c).
+extern "C" int wiliwili_console_log;
 #endif
 
 int main(int argc, char* argv[]) {
@@ -47,6 +49,10 @@ int main(int argc, char* argv[]) {
     // The log is a file on the console's storage and nothing removes it: bound
     // it so a long session cannot fill the drive with debug lines.
     brls::Logger::setLogFileLimit(16 * 1024 * 1024);
+    // Warnings and errors go to the console's own log as well, so they are
+    // visible while the title runs (port 3232 of the console) and are not lost
+    // when the title stops without reaching the file.
+    brls::Logger::setConsoleLogHandle(wiliwili_console_log);
     // The queue the console's hardware video decoder runs on has to be made
     // before the application asks for full access, and the crash reporter has
     // to be there to say what went wrong.
