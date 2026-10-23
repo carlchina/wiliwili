@@ -1,0 +1,71 @@
+name: Build PS5
+
+# This fork only ships the PlayStation 5 port, so the build that matters is
+# the one below. The upstream workflows for the other platforms are kept in
+# the tree untouched and are disabled in the fork's Actions settings.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      disable_unity_build:
+        description: 'Disable unity build'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: ps5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      DIST_PS5: ${{ steps.info.outputs.DIST_PS5 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Version
+        id: info
+        run: |
+          VERSION=$(git rev-parse --short HEAD)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "DIST_PS5=wiliwili-PS5-${VERSION}" >> $GITHUB_OUTPUT
+
+  build-ps5:
+    needs: [ version ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build pkg-config
+          echo "LLVM_CONFIG=/usr/lib/llvm-18/bin/llvm-config" >> $GITHUB_ENV
+
+      # ps5-payload-dev ships a cross compilation sysroot with SDL2, ffmpeg,
+      # mesa, libass, curl and the prospero LLVM toolchain wrappers
+      - name: Install SDK
+        run: |
+          scripts/ps5/install_sdk.sh "$HOME/ps5-payload-sdk"
+          echo "PS5_PAYLOAD_SDK=$HOME/ps5-payload-sdk" >> $GITHUB_ENV
+
+      - name: Build
+        env:
+          BRLS_UNITY_BUILD: ${{ github.event.inputs.disable_unity_build == 'true' && 'OFF' || 'ON' }}
+        run: |
+          scripts/build_ps5.sh
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ needs.version.outputs.DIST_PS5 }}
+          path: "cmake-build-ps5/ps5"
