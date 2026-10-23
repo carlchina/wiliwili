@@ -28,6 +28,8 @@ extern "C" int sceSystemServiceLoadExec(const char* path, const char* argv[]);
 extern "C" int wiliwili_console_log;
 // Writes how far the start-up got, before the log can be written (runtime_shims.c).
 extern "C" void wiliwili_mark(const char *stage);
+// Microsecond sleep used by the spin-loops that keep the process alive.
+extern "C" int sceKernelUsleep(unsigned microseconds);
 #endif
 
 int main(int argc, char* argv[]) {
@@ -82,7 +84,19 @@ int main(int argc, char* argv[]) {
     // Init the app and i18n
     if (!brls::Application::init()) {
         brls::Logger::error("Unable to init application");
+#ifdef PS5
+        // On PS5 returning from main() terminates the process before the log
+        // is flushed and before crash-last.txt can be written, so the user
+        // gets CE-108255-1 with no diagnostic file.  Spin instead so the log
+        // stays readable (the same pattern as catchReturnFromMain in
+        // scripts/ps5/title/runtime_shims.c).
+        wiliwili_mark("init failed");
+        fflush(nullptr);
+        for (;;)
+            sceKernelUsleep(100000);
+#else
         return EXIT_FAILURE;
+#endif
     }
 #ifdef PS5
     wiliwili_mark("application");
