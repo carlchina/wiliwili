@@ -253,9 +253,11 @@ if [[ ${action} == "deploy" && -d "${HOME}/Downloads" ]]; then
     if command -v zip >/dev/null 2>&1; then
         (
             cd "${dist_dir}"
-            rm -f "${HOME}/Downloads/${title_id}.zip"
+            rm -f "${HOME}/Downloads/${title_id}.zip" "${HOME}/Downloads/wiliwili-PS5-v1.6.0.zip"
             zip -rq -X "${HOME}/Downloads/${title_id}.zip" "${title_id}"
+            cp -f "${HOME}/Downloads/${title_id}.zip" "${HOME}/Downloads/wiliwili-PS5-v1.6.0.zip"
         )
         printf '==> [title] Created %s/Downloads/%s.zip\n' "${HOME}" "${title_id}"
+        printf '==> [title] Created %s/Downloads/wiliwili-PS5-v1.6.0.zip\n' "${HOME}"
     fi
 fi
