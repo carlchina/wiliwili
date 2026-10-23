@@ -34,9 +34,9 @@ if [[ $(uname -s) == Darwin ]]; then
     # does not have; the checkout carries a stand-in for it.
     export PATH="${PS5_BOILERPLATE}/tools/macos:${PATH}"
 else
-    export PS5_CLANG=${PS5_CLANG:-/usr/lib/llvm-18/bin/clang-18}
+    export PS5_CLANG=${PS5_CLANG:-/usr/lib/llvm-18/bin/clang}
     export LLVM_CONFIG=${LLVM_CONFIG:-/usr/lib/llvm-18/bin/llvm-config}
-    export CXX=${CXX:-/usr/lib/llvm-18/bin/clang++-18}
+    export CXX=${CXX:-/usr/lib/llvm-18/bin/clang++}
 fi
 
 echo "==> [title] Dependencies: ${deps}"

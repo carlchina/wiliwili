@@ -93,8 +93,6 @@ jobs:
       PS5_SDL_SOURCE: ${{ github.workspace }}/ps5-deps/SDL2
       PS5_SDL2_PREFIX: ${{ github.workspace }}/ps5-deps/ps5-opengl/build/sdl2-native/sdk
       PS5_NATIVE_TOOL: ${{ github.workspace }}/ps5-deps/ps5-native-app-boilerplate/build-host/ps5-native-tool
-      PS5_CLANG: /usr/lib/llvm-18/bin/clang-18
-      LLVM_CONFIG: /usr/lib/llvm-18/bin/llvm-config
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -108,6 +106,21 @@ jobs:
           sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build \
             pkg-config cmake python3 curl unzip zlib1g-dev
 
+      # The distribution keeps the suffixed names in /usr/bin and the whole
+      # toolchain, the utilities beside the compiler included, in the LLVM
+      # prefix llvm-config reports.
+      - name: Locate LLVM 18
+        run: |
+          bindir=$(llvm-config-18 --bindir)
+          for tool in clang clang++ llvm-config llvm-ar llvm-nm llvm-objcopy llvm-readelf; do
+            test -x "$bindir/$tool" || { echo "$bindir/$tool is missing" >&2; exit 1; }
+          done
+          {
+            echo "PS5_CLANG=$bindir/clang"
+            echo "LLVM_CONFIG=$bindir/llvm-config"
+            echo "CXX=$bindir/clang++"
+          } >> $GITHUB_ENV
+
       - name: Cache the pinned sources
         uses: actions/cache@v4
         with:
@@ -118,8 +131,6 @@ jobs:
         run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"
 
       - name: Build the module converter
-        env:
-          CXX: /usr/lib/llvm-18/bin/clang++-18
         run: scripts/ps5/title/build_native_tool.sh
 
       - name: Build the static SDL2
