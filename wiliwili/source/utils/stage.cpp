@@ -6,6 +6,7 @@
 
 #include <borealis/core/logger.hpp>
 #include <borealis/core/thread.hpp>
+#include <borealis/core/time.hpp>
 
 #include <chrono>
 #include <thread>
