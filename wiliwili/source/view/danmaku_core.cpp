@@ -35,6 +35,11 @@
 static inline uint64_t ntohll(uint64_t netlonglong) { return __builtin_bswap64(netlonglong); }
 #elif defined(__WINRT__)
 #elif defined(_WIN32_WINNT) && _WIN32_WINNT >= _WIN32_WINNT_WIN8
+#if defined(_M_ARM64)
+// Winsock declares the 64-bit swap for the desktop targets only: the arm64
+// build has the 32-bit ones, so the pair is spelled out here.
+static inline uint64_t ntohll(uint64_t value) { return __builtin_bswap64(value); }
+#endif
 #elif defined(betoh64)
 #define ntohll betoh64
 #elif defined(be64toh)
