@@ -5,6 +5,9 @@ This directory builds wiliwili as a **native PS5 title**: a folder below
 shows on the home screen like any installed application. It is not a payload and
 not a package.
 
+> **Requirement**: Running native titles requires [ShadowMountPlus 1.7beta6+](https://github.com/drakmor/ShadowMountPlus/releases) and the latest version of kstuff.
+
+
 ```
 scripts/ps5/title/
   build_title.sh        link, convert and sign the module; assemble the folder

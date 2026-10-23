@@ -169,10 +169,12 @@ PC客户端支持切换硬件解码、秒开流畅适合老电脑、支持鼠标
 1. 网络相关的问题附加 `网络诊断截图`，入口：应用内设置/实用工具/网络诊断
 2. [Switch用户] 要确保 `大气层`和`系统固件` 更新到 **最新** ，`内存卡`为 **FAT32**
 3. [Switch用户] 如果打开应用黑屏时间过长，可以尝试删除内存卡目录 `config/wiliwili` 重新进入
-4. 确保 `系统时间`正确、系统`网络设置`正确（主要是DNS）、如果使用了`网络代理`请在反馈前关闭并重新测试
-5. 查找有没有其他人出现过类似的问题：[Issues](https://github.com/xfangfang/wiliwili/issues?q=is%3Aissue)
-6. **完整且详细地** 描述你的问题，最好附加演示视频、截图。
-7. 尝试复现问题，尽力找到BUG出现的规律
+4. [PS5用户] 运行原生 Title 需要使用 [ShadowMountPlus 1.7beta6 以上版本](https://github.com/drakmor/ShadowMountPlus/releases) 以及最新版本 kstuff
+5. 确保 `系统时间`正确、系统`网络设置`正确（主要是DNS）、如果使用了`网络代理`请在反馈前关闭并重新测试
+6. 查找有没有其他人出现过类似的问题：[Issues](https://github.com/xfangfang/wiliwili/issues?q=is%3Aissue)
+7. **完整且详细地** 描述你的问题，最好附加演示视频、截图。
+8. 尝试复现问题，尽力找到BUG出现的规律
+
 
 <br>
 
@@ -381,6 +383,9 @@ scripts/build_ps5.sh
 与 payload 共用同一套源码，但会再链接一次成单个静态镜像、签名成 `eboot.bin`，并组装成
 `/data/homebrew/PPSA99099/` 目录。步骤见 [scripts/ps5/title/README.md](scripts/ps5/title/README.md)，
 本仓库的 CI 也只发布这一个产物。
+
+> **运行环境要求**：PS5 原生 Title 需配合 [ShadowMountPlus 1.7beta6 以上版本](https://github.com/drakmor/ShadowMountPlus/releases) 以及最新版本的 kstuff 使用。
+
 
 ### GLFW or SDL
 
