@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fcntl.h>
 #include <initializer_list>
 #include <pthread.h>
@@ -33,7 +34,9 @@ extern "C"
     int sceKernelUsleep(unsigned microseconds);
     std::uint64_t sceKernelGetProcessTime(void);
     void wiliwili_ps5_notify(const char *message);
+    extern char wiliwili_last_stage[];
     // The app's code, from the link (scripts/ps5/title/ps5-pie.ld).
+
     extern const char __wiliwili_text_start[];
     extern const char __wiliwili_text_end[];
 }
@@ -222,6 +225,31 @@ void PutCalls(std::uint64_t stack)
         g_text.Put("  none found\n");
 }
 
+std::uint64_t GetFirstCaller(std::uint64_t stack)
+{
+    constexpr std::size_t kBytes = 32 * 1024;
+    static std::uint64_t words[256];
+    std::uint64_t at = stack & ~std::uint64_t{7};
+    for (std::size_t seen = 0; seen < kBytes; at += sizeof(words), seen += sizeof(words))
+    {
+        const std::size_t page = 4096 - (at & 4095);
+        const std::size_t bytes = page < sizeof(words) ? page : sizeof(words);
+        if (!Copy(reinterpret_cast<const void *>(at), words, bytes))
+            break;
+        for (std::size_t i = 0; i < bytes / 8; ++i)
+        {
+            const std::uint64_t value = words[i];
+            if (!InCode(value) || value < CodeStart() + 8)
+                continue;
+            unsigned char before[8];
+            if (Copy(reinterpret_cast<const void *>(value - 8), before, 8) && AfterCall(before))
+                return value;
+        }
+    }
+    return 0;
+}
+
+
 const char *ThreadName(std::uintptr_t thread)
 {
     for (const NamedThread &entry : g_threads)
@@ -328,15 +356,29 @@ void Handler(int signal, siginfo_t *info, void *context)
             (void)write(g_log_file, g_text.data, g_text.size);
         (void)sceKernelDebugOutText(0, "[wiliwili] crash report written to crash-last.txt\n");
 
-        char toast[128];
+        char toast[256];
         const std::uint64_t rip = m[20];
-        const std::uint64_t rip_offset = (rip >= CodeStart() && rip < CodeEnd()) ? (rip - CodeStart()) : rip;
-        std::snprintf(toast, sizeof(toast), "wiliwili: crash %s (sig %d) at eboot+0x%llx",
-                      kind ? kind->name : "signal", signal, static_cast<unsigned long long>(rip_offset));
+        const std::uint64_t caller = GetFirstCaller(m[23]);
+        if (InCode(rip))
+        {
+            std::snprintf(toast, sizeof(toast), "wiliwili: crash %s (sig %d)\nat eboot+0x%llx\nstage: %s",
+                          kind ? kind->name : "signal", signal,
+                          static_cast<unsigned long long>(rip - CodeStart()),
+                          wiliwili_last_stage);
+        }
+        else
+        {
+            std::snprintf(toast, sizeof(toast), "wiliwili: crash %s (sig %d)\nsys: 0x%llx\ncaller: eboot+0x%llx\nstage: %s",
+                          kind ? kind->name : "signal", signal,
+                          static_cast<unsigned long long>(rip),
+                          caller ? static_cast<unsigned long long>(caller - CodeStart()) : 0ULL,
+                          wiliwili_last_stage);
+        }
         wiliwili_ps5_notify(toast);
 
         g_reporting.store(2);
     }
+
     else
     {
         // Another thread is writing the report: let it finish.
@@ -403,6 +445,33 @@ void Install(const char *logs_dir, int log_file)
     for (const Kind &kind : kKinds)
         installed += sigaction(kind.signal, &action, nullptr) == 0 ? 1 : 0;
     NameThread("main");
+
+    std::set_terminate([]() {
+        char buffer[256] = "wiliwili: terminate called";
+        try
+        {
+            auto eptr = std::current_exception();
+            if (eptr)
+                std::rethrow_exception(eptr);
+        }
+        catch (const std::exception &e)
+        {
+            std::snprintf(buffer, sizeof(buffer), "wiliwili terminate:\n%s\nstage: %s", e.what(), wiliwili_last_stage);
+        }
+        catch (...)
+        {
+            std::snprintf(buffer, sizeof(buffer), "wiliwili terminate: unknown exception\nstage: %s", wiliwili_last_stage);
+        }
+        wiliwili_ps5_notify(buffer);
+        if (g_log_file >= 0)
+        {
+            (void)write(g_log_file, buffer, std::strlen(buffer));
+            (void)write(g_log_file, "\n", 1);
+        }
+        (void)sceKernelDebugOutText(0, buffer);
+        abort();
+    });
+
     // The code range answers where the loader put the image: the offsets in
     // llvm-pie.elf start at __wiliwili_text_start.
     std::printf("[wiliwili] crash report: %d handlers, probe=%d, code 0x%llx to 0x%llx\n",
@@ -410,6 +479,7 @@ void Install(const char *logs_dir, int log_file)
                 static_cast<unsigned long long>(CodeStart()),
                 static_cast<unsigned long long>(CodeEnd()));
 }
+
 
 /*
  * The log file is opened by the constructor in runtime_shims.c, which this

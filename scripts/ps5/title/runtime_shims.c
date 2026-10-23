@@ -118,8 +118,13 @@ static FILE *wiliwili_log_open(const char *directory)
  * line. This writes to a file of its own as soon as the first stage is set, so
  * a session that ends in the first moments still says which step it reached.
  */
+char wiliwili_last_stage[64] = "boot";
+
 void wiliwili_mark(const char *stage)
 {
+    if (stage && *stage)
+        snprintf(wiliwili_last_stage, sizeof(wiliwili_last_stage), "%s", stage);
+
     static int handle = -2;  // -2: not opened yet, -1: nowhere to write
     static struct timespec first;
     if (handle == -2) {
@@ -143,6 +148,7 @@ void wiliwili_mark(const char *stage)
         return;
     (void)!write(handle, line, (size_t)length < sizeof(line) ? (size_t)length : sizeof(line) - 1);
 }
+
 
 /**
  * The console's hardware video decoder is a system module that is not loaded
@@ -270,10 +276,15 @@ static void wiliwili_report_memory(void)
 __attribute__((noreturn)) void __assert(const char *function, const char *file, int line,
                                         const char *expression)
 {
+    char toast[256];
+    snprintf(toast, sizeof(toast), "wiliwili assert failed:\n%s\n(%s:%d)", expression ? expression : "?",
+             file ? file : "?", line);
+    wiliwili_ps5_notify(toast);
     fprintf(stderr, "[wiliwili] assertion failed: %s (%s:%d, %s)\n", expression, file, line,
             function);
     abort();
 }
+
 
 /* The SDK binds these to libScePosixForWebKit, a system library a title does not
  * load: without a definition the call jumps to nothing and the application stops

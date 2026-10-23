@@ -125,8 +125,9 @@ mkdir -p "$work_dir" "$work_dir/obj"
 echo "==> [title] Compiling the native startup, heap and shims"
 compile() {
     local standard=$1 source=$2 output=$3
+    shift 3
     "$compiler" -std="$standard" -O2 -Wall -Wextra -ffunction-sections -fdata-sections \
-        -c "$source" -o "$output"
+        "$@" -c "$source" -o "$output"
 }
 compile c++20 "$PS5_BOILERPLATE/tooling/native/app_crt.cpp" "$work_dir/obj/app_crt.o"
 compile c++20 "$PS5_BOILERPLATE/tooling/native/app_cpp_runtime.cpp" \
@@ -137,7 +138,7 @@ compile c11 "$title_dir/app_heap.c" "$work_dir/obj/app_heap.o"
 compile c11 "$title_dir/runtime_shims.c" "$work_dir/obj/runtime_shims.o"
 # Linked right after the log shim so its constructor installs the handlers once
 # stdout is the log file.
-compile c++20 "$title_dir/crash_report.cpp" "$work_dir/obj/crash_report.o"
+compile c++20 "$title_dir/crash_report.cpp" "$work_dir/obj/crash_report.o" -fexceptions
 compile c11 "$title_dir/locale_shims.c" "$work_dir/obj/locale_shims.o"
 compile c11 "$title_dir/libc_shims.c" "$work_dir/obj/libc_shims.o"
 # The statically linked OpenGL implementation keeps its context in emulated TLS,
