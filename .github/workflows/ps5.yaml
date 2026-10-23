@@ -6,6 +6,8 @@ name: Build PS5
 
 on:
   push:
+    # the branch this fork works on; other branches are released deliberately
+    branches: [ yoga ]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -35,48 +37,11 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "DIST_PS5=wiliwili-PS5-${VERSION}" >> $GITHUB_OUTPUT
 
-  build-ps5:
-    needs: [ version ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Install dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build pkg-config
-          echo "LLVM_CONFIG=/usr/lib/llvm-18/bin/llvm-config" >> $GITHUB_ENV
-
-      # ps5-payload-dev ships a cross compilation sysroot with SDL2, ffmpeg,
-      # mesa, libass, curl and the prospero LLVM toolchain wrappers
-      - name: Install SDK
-        run: |
-          scripts/ps5/install_sdk.sh "$HOME/ps5-payload-sdk"
-          echo "PS5_PAYLOAD_SDK=$HOME/ps5-payload-sdk" >> $GITHUB_ENV
-
-      - name: Build
-        env:
-          BRLS_UNITY_BUILD: ${{ github.event.inputs.disable_unity_build == 'true' && 'OFF' || 'ON' }}
-        run: |
-          scripts/build_ps5.sh
-
-      - name: Upload dist
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ needs.version.outputs.DIST_PS5 }}
-          path: "cmake-build-ps5/ps5"
-
-  # The payload build above is a web-launched homebrew: its folder holds an
-  # eboot.elf that the console's browser launcher starts. What a console
-  # installed below /data/homebrew/PPSA99099 runs is the native title, one
-  # static image signed into an eboot.bin, and that is assembled by
-  # scripts/ps5/title - the same script the local deploy uses. It needs the
-  # pinned third party sources (about 700 MB, cached between runs) and takes
-  # the application through a second link.
+  # What a console runs from below /data/homebrew/PPSA99099 is a native title:
+  # one static image signed into an eboot.bin, not the eboot.elf a browser
+  # launcher starts. scripts/ps5/title assembles that folder - the same script
+  # the local deploy uses - and needs the pinned third party sources (about
+  # 700 MB, cached between runs) plus a second link of the application.
   build-ps5-title:
     needs: [ version ]
     runs-on: ubuntu-latest
@@ -130,8 +95,8 @@ jobs:
       - name: Fetch dependency
         run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"
 
-      # The SDK ships the ffmpeg it was built with but not mpv: the payload
-      # build has the same step, and the title links the archive it installs.
+      # The SDK ships the ffmpeg it was built with but not mpv: this installs
+      # the archive the title links against.
       - name: Build libmpv
         run: |
           if ! "${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config" --exists mpv; then
@@ -185,8 +150,15 @@ jobs:
       - name: Build
         run: cmake --build cmake-build-ps5-title --target wiliwili.title -j$(nproc)
 
+      # The archive holds the title folder as it has to sit below
+      # /data/homebrew: unzip it there and the folder is in place.
+      - name: Stage the title folder
+        run: |
+          mkdir -p package
+          cp -a dist/PPSA99099 package/
+
       - name: Upload title
         uses: actions/upload-artifact@v6
         with:
           name: ${{ needs.version.outputs.DIST_PS5 }}-title
-          path: "dist/PPSA99099"
+          path: package
