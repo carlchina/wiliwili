@@ -130,6 +130,14 @@ jobs:
       - name: Fetch dependency
         run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"
 
+      # The SDK ships the ffmpeg it was built with but not mpv: the payload
+      # build has the same step, and the title links the archive it installs.
+      - name: Build libmpv
+        run: |
+          if ! "${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config" --exists mpv; then
+            scripts/ps5/build_libmpv.sh
+          fi
+
       - name: Build the module converter
         run: scripts/ps5/title/build_native_tool.sh
 
