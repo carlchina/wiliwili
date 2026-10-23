@@ -104,7 +104,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build \
-            pkg-config cmake python3 curl unzip zlib1g-dev
+            pkg-config cmake python3 curl wget unzip zlib1g-dev
 
       # The distribution keeps the suffixed names in /usr/bin and the whole
       # toolchain, the utilities beside the compiler included, in the LLVM
@@ -144,12 +144,19 @@ jobs:
       - name: Build the static SDL2
         run: scripts/ps5/title/build_sdl2.sh
 
+      # The clean-room runtime module the title loads beside its image is
+      # generated from the boilerplate's own sources, not shipped with it.
+      - name: Build the runtime module
+        run: |
+          bindir=$(llvm-config-18 --bindir)
+          make -C "$PS5_BOILERPLATE" libc HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"
+
       - name: Configure
         env:
           BRLS_UNITY_BUILD: ${{ github.event.inputs.disable_unity_build == 'true' && 'OFF' || 'ON' }}
         run: |
           cmake -B cmake-build-ps5-title -DCMAKE_BUILD_TYPE=Release -DPLATFORM_PS5=ON \
-            -DPS5_NATIVE_TITLE=ON -DBRLS_UNITY_BUILD=${BRLS_UNITY_BUILD} \
+            -DPS5_NATIVE_TITLE=ON -DUSE_LIBROMFS=ON -DBRLS_UNITY_BUILD=${BRLS_UNITY_BUILD} \
             -DCMAKE_UNITY_BUILD_BATCH_SIZE=16
 
       - name: Build
