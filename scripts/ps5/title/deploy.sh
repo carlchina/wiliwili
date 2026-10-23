@@ -245,3 +245,17 @@ with FTP() as ftp:
     except (EOFError, OSError):
         pass
 PY
+
+if [[ ${action} == "deploy" && -d "${HOME}/Downloads" ]]; then
+    printf '==> [title] Copying to %s/Downloads/%s ...\n' "${HOME}" "${title_id}"
+    rm -rf "${HOME}/Downloads/${title_id}"
+    cp -a "${artifact}" "${HOME}/Downloads/${title_id}"
+    if command -v zip >/dev/null 2>&1; then
+        (
+            cd "${dist_dir}"
+            rm -f "${HOME}/Downloads/${title_id}.zip"
+            zip -rq -X "${HOME}/Downloads/${title_id}.zip" "${title_id}"
+        )
+        printf '==> [title] Created %s/Downloads/%s.zip\n' "${HOME}" "${title_id}"
+    fi
+fi
