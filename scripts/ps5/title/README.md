@@ -86,6 +86,11 @@ that runs `build_title.sh` on the objects CMake compiled. The objects themselves
 are the same ones the payload build produces, which is why the two share the
 compiler settings.
 
+With `USE_LIBROMFS=ON`, which the title build uses, the resources are compiled
+into the image and read from the embedded file system: the `resources/` folder
+next to `eboot.bin` is a copy for reference only, and changing a layout or a
+translation needs `cmake --build` before `build_title.sh`, not just a copy.
+
 The scripts accept the paths of everything they need, so a CI job can keep its
 own layout:
 
