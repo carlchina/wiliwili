@@ -383,6 +383,11 @@ scripts/build_ps5.sh
 也可以手动指定 `PS5_PAYLOAD_SDK` 使用已有的环境，编译完成后通过 `scripts/ps5/deploy.sh` 上传到 PS5 并启动；
 `scripts/ps5/install_tile.sh` 可以为 wiliwili 添加一个主屏幕入口。
 
+若要让 PS5 把它当作普通的 App 启动（而不是通过网页启动器加载 payload），可以构建原生 title：
+与 payload 共用同一套源码，但会再链接一次成单个静态镜像、签名成 `eboot.bin`，并组装成
+`/data/homebrew/PPSA99099/` 目录。步骤见 [scripts/ps5/title/README.md](scripts/ps5/title/README.md)，
+本仓库的 CI 也只发布这一个产物。
+
 ### GLFW or SDL
 
 wiliwili 使用 nanovg 绘制图形和文字，对于创建窗口、按键触摸、输入法等支持是通过 GLFW(默认) 或 SDL 完成的。
@@ -425,7 +430,11 @@ The development of wiliwili cannot do without the support of the following organ
     - https://github.com/fish47/mpv-vita
     - http://github.com/averne/FFmpeg
     - http://github.com/averne/mpv
+- PS5 native title: BlackBearReloaded's clean-room OpenGL implementation and app boilerplate
+    - https://github.com/blackbearreloaded/ps5-opengl
+    - https://github.com/blackbearreloaded/ps5-native-app-boilerplate
 - Misc
+    - https://github.com/libsdl-org/SDL
     - https://github.com/libcpr/cpr
     - https://github.com/nlohmann/json
     - https://github.com/nayuki/QR-Code-generator
