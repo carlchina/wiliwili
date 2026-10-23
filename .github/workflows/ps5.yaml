@@ -69,3 +69,75 @@ jobs:
         with:
           name: ${{ needs.version.outputs.DIST_PS5 }}
           path: "cmake-build-ps5/ps5"
+
+  # The payload build above is a web-launched homebrew: its folder holds an
+  # eboot.elf that the console's browser launcher starts. What a console
+  # installed below /data/homebrew/PPSA99099 runs is the native title, one
+  # static image signed into an eboot.bin, and that is assembled by
+  # scripts/ps5/title - the same script the local deploy uses. It needs the
+  # pinned third party sources (about 700 MB, cached between runs) and takes
+  # the application through a second link.
+  build-ps5-title:
+    needs: [ version ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # The paths scripts/ps5/title/env.sh derives from the deps directory;
+      # they are spelled out here because env.sh also picks the compiler by
+      # platform, and the runner's clang-18 is not where Homebrew keeps it.
+      PS5_DEPS_PREFIX: ${{ github.workspace }}/ps5-deps
+      PS5_PAYLOAD_SDK: ${{ github.workspace }}/ps5-deps/ps5-payload-sdk
+      PS5_OPENGL_CHECKOUT: ${{ github.workspace }}/ps5-deps/ps5-opengl
+      PS5_OPENGL_PREFIX: ${{ github.workspace }}/ps5-deps/ps5-opengl-sdk-1.0.2/sdk
+      PS5_BOILERPLATE: ${{ github.workspace }}/ps5-deps/ps5-native-app-boilerplate
+      PS5_SDL_SOURCE: ${{ github.workspace }}/ps5-deps/SDL2
+      PS5_SDL2_PREFIX: ${{ github.workspace }}/ps5-deps/ps5-opengl/build/sdl2-native/sdk
+      PS5_NATIVE_TOOL: ${{ github.workspace }}/ps5-deps/ps5-native-app-boilerplate/build-host/ps5-native-tool
+      PS5_CLANG: /usr/lib/llvm-18/bin/clang-18
+      LLVM_CONFIG: /usr/lib/llvm-18/bin/llvm-config
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build \
+            pkg-config cmake python3 curl unzip zlib1g-dev
+
+      - name: Cache the pinned sources
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PS5_DEPS_PREFIX }}
+          key: ps5-title-deps-${{ hashFiles('scripts/ps5/title/fetch_deps.sh', 'scripts/ps5/install_sdk.sh') }}
+
+      - name: Fetch dependency
+        run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"
+
+      - name: Build the module converter
+        env:
+          CXX: /usr/lib/llvm-18/bin/clang++-18
+        run: scripts/ps5/title/build_native_tool.sh
+
+      - name: Build the static SDL2
+        run: scripts/ps5/title/build_sdl2.sh
+
+      - name: Configure
+        env:
+          BRLS_UNITY_BUILD: ${{ github.event.inputs.disable_unity_build == 'true' && 'OFF' || 'ON' }}
+        run: |
+          cmake -B cmake-build-ps5-title -DCMAKE_BUILD_TYPE=Release -DPLATFORM_PS5=ON \
+            -DPS5_NATIVE_TITLE=ON -DBRLS_UNITY_BUILD=${BRLS_UNITY_BUILD} \
+            -DCMAKE_UNITY_BUILD_BATCH_SIZE=16
+
+      - name: Build
+        run: cmake --build cmake-build-ps5-title --target wiliwili.title -j$(nproc)
+
+      - name: Upload title
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ needs.version.outputs.DIST_PS5 }}-title
+          path: "dist/PPSA99099"

@@ -57,6 +57,16 @@ fi
 }
 export PS5_CLANG
 
+# The LLVM utilities the conversions below call sit beside the compiler, the
+# same way in Homebrew and in a distribution's llvm-18 package.
+llvm_bin=$(dirname -- "$PS5_CLANG")
+for utility in llvm-ar llvm-nm llvm-objcopy llvm-readelf; do
+    [[ -x $llvm_bin/$utility ]] || {
+        echo "$llvm_bin/$utility is missing; point PS5_CLANG at a complete LLVM 18" >&2
+        exit 2
+    }
+done
+
 build_dir=${PS5_TITLE_BUILD_DIR:-$root/cmake-build-ps5-title}
 title_id=${PS5_TITLE_ID:-PPSA99099}
 out_dir=${PS5_TITLE_OUT_DIR:-$root/dist/$title_id}
@@ -153,7 +163,7 @@ write_ime_slots() {
     local elf=$1 output=$2
     local text_offset=0
     if [[ -n $elf ]]; then
-        text_offset=$(/opt/homebrew/opt/llvm@18/bin/llvm-readelf -S "$elf" |
+        text_offset=$("$llvm_bin/llvm-readelf" -S "$elf" |
             awk '$3 == ".text" && !found { print $5; found = 1 }')
     fi
     local symbols=(sceImeDialogInit sceImeDialogGetStatus sceImeDialogGetResult
@@ -167,7 +177,7 @@ write_ime_slots() {
         for name in "${symbols[@]}"; do
             local offset=0
             if [[ -n $elf ]]; then
-                offset=$(/opt/homebrew/opt/llvm@18/bin/llvm-readelf -r "$elf" |
+                offset=$("$llvm_bin/llvm-readelf" -r "$elf" |
                     awk -v sym="$name" '$5 == sym && !found { print $1; found = 1 }')
             fi
             printf '    0x%016xULL, /* %s */\n' "$((16#${offset:-0}))" "$name"
@@ -187,7 +197,7 @@ write_import_slots() {
     local elf=$1 output=$2
     local text_offset=0
     if [[ -n $elf ]]; then
-        text_offset=$(/opt/homebrew/opt/llvm@18/bin/llvm-readelf -S "$elf" |
+        text_offset=$("$llvm_bin/llvm-readelf" -S "$elf" |
             awk '$3 == ".text" && !found { print $5; found = 1 }')
     fi
     {
@@ -205,7 +215,7 @@ write_import_slots() {
             if [[ -n $elf ]]; then
                 # The reader is left to finish: an early exit would make it
                 # die on a broken pipe, which the shell treats as a failure.
-                offset=$(/opt/homebrew/opt/llvm@18/bin/llvm-readelf -r "$elf" |
+                offset=$("$llvm_bin/llvm-readelf" -r "$elf" |
                     awk -v sym="$name" '$5 == sym && !found { print $1; found = 1 }')
             fi
             printf '    0x%016xULL, /* %s */\n' "$((16#${offset:-0}))" "$name"
@@ -239,9 +249,9 @@ app_libc="$work_dir/libc-app.a"
 cp -- "$PS5_PAYLOAD_SDK/target/lib/libc.a" "$app_libc"
 shim_objects="$work_dir/obj/runtime_shims.o $work_dir/obj/libc_shims.o \
 $work_dir/obj/locale_shims.o"
-/opt/homebrew/opt/llvm@18/bin/llvm-nm --defined-only $shim_objects 2>/dev/null |
+"$llvm_bin/llvm-nm" --defined-only $shim_objects 2>/dev/null |
     sed 's/.* //' | sort -u > "$work_dir/libc-patch-shims.txt"
-/opt/homebrew/opt/llvm@18/bin/llvm-nm --defined-only \
+"$llvm_bin/llvm-nm" --defined-only \
     "$PS5_PAYLOAD_SDK/target/lib/libc.a" 2>/dev/null |
     sed 's/.* //' | sort -u > "$work_dir/libc-patch-all.txt"
 weaken_member() {
@@ -261,7 +271,7 @@ weaken_member() {
     done < "$work_dir/libc-patch-all.txt"
     flags=($(printf '%s\n' "${flags[@]}" | sort -u))
     if ((${#flags[@]} > 0)); then
-        /opt/homebrew/opt/llvm@18/bin/llvm-objcopy "${flags[@]}" "$object"
+        "$llvm_bin/llvm-objcopy" "${flags[@]}" "$object"
         "$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$archive" "$member"
         (cd "$work_dir/libc-patch" &&
             "$PS5_PAYLOAD_SDK/bin/prospero-ar" r "$archive" "$member")
