@@ -153,20 +153,26 @@ jobs:
 
       # The clean-room runtime module the title loads beside its image is
       # generated from the boilerplate's own sources, not shipped with it.
+      # The boilerplate fetches zlib from zlib.net and refuses anything that
+      # does not match the pinned checksum; that URL answers the runner with a
+      # different archive, so the pinned one is taken from the mirror of the
+      # release instead and put where the boilerplate expects to find it.
+      - name: Fetch the pinned zlib
+        run: |
+          zlib="$PS5_BOILERPLATE/.deps/native/zlib"
+          mkdir -p "$zlib"
+          curl --location --fail --retry 5 --retry-delay 3 \
+            --output "$zlib/zlib-1.3.2.tar.gz" \
+            https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
+          printf '%s  %s\n' \
+            bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16 \
+            "$zlib/zlib-1.3.2.tar.gz" | sha256sum --check --strict
+
       - name: Build the runtime module
         run: |
           bindir=$(llvm-config-18 --bindir)
-          # The boilerplate downloads zlib once and refuses a file whose
-          # checksum does not match; a truncated download is worth another try.
-          for attempt in 1 2 3; do
-            if make -C "$PS5_BOILERPLATE" libc USE_CCACHE=0 \
-                 HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"; then
-              exit 0
-            fi
-            echo "attempt $attempt failed, dropping the downloaded zlib" >&2
-            rm -rf "$PS5_BOILERPLATE/.deps/native/zlib"
-          done
-          exit 1
+          make -C "$PS5_BOILERPLATE" libc USE_CCACHE=0 \
+            HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"
 
       - name: Configure
         env:
