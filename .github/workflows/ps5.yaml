@@ -149,7 +149,8 @@ jobs:
       - name: Build the runtime module
         run: |
           bindir=$(llvm-config-18 --bindir)
-          make -C "$PS5_BOILERPLATE" libc HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"
+          make -C "$PS5_BOILERPLATE" libc USE_CCACHE=0 \
+            HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"
 
       - name: Configure
         env:
