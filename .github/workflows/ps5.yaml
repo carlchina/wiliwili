@@ -156,8 +156,17 @@ jobs:
       - name: Build the runtime module
         run: |
           bindir=$(llvm-config-18 --bindir)
-          make -C "$PS5_BOILERPLATE" libc USE_CCACHE=0 \
-            HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"
+          # The boilerplate downloads zlib once and refuses a file whose
+          # checksum does not match; a truncated download is worth another try.
+          for attempt in 1 2 3; do
+            if make -C "$PS5_BOILERPLATE" libc USE_CCACHE=0 \
+                 HOST_CC="$bindir/clang" HOST_CXX="$bindir/clang++"; then
+              exit 0
+            fi
+            echo "attempt $attempt failed, dropping the downloaded zlib" >&2
+            rm -rf "$PS5_BOILERPLATE/.deps/native/zlib"
+          done
+          exit 1
 
       - name: Configure
         env:
