@@ -455,6 +455,14 @@ PY
 [[ ! -f "$root/scripts/ps5/sce_sys/icon0.png" ]] ||
     cp "$root/scripts/ps5/sce_sys/icon0.png" "$out_dir/sce_sys/icon0.png"
 
+# The home screen's backgrounds: the one shown while the title is selected and
+# the one shown while it launches. The console only reads the 4K BC7 pair, and
+# it wants both or neither, so they are copied together.
+if [[ -f "$root/scripts/ps5/sce_sys/pic0.dds" && -f "$root/scripts/ps5/sce_sys/pic1.dds" ]]; then
+    cp "$root/scripts/ps5/sce_sys/pic0.dds" "$out_dir/sce_sys/pic0.dds"
+    cp "$root/scripts/ps5/sce_sys/pic1.dds" "$out_dir/sce_sys/pic1.dds"
+fi
+
 # The loader-visible companion module: a contract plus the heap API table.
 if [[ ! -f "$PS5_BOILERPLATE/runtime/libc.prx" ]]; then
     echo "'$PS5_BOILERPLATE/runtime/libc.prx' is missing" >&2
