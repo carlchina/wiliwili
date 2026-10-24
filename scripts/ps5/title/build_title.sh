@@ -409,11 +409,16 @@ compile c++20 "$work_dir/obj/ime_slots.cpp" "$work_dir/obj/ime_slots.o"
 link_image
 
 echo "==> [title] Converting and signing"
+vulkan_stub=()
+if [[ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so" ]]; then
+    vulkan_stub=(--stub "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so")
+fi
 "$PS5_NATIVE_TOOL" link --in "$work_dir/llvm-pie.elf" --out "$work_dir/eboot.elf" \
     --stub-dir "$PS5_PAYLOAD_SDK/target/lib" \
     --stub "$PS5_OPENGL_PREFIX/lib/libSceAgc.so" \
     --stub "$PS5_OPENGL_PREFIX/lib/libSceAgcDriver.so" \
     --stub "$work_dir/stubs/libSceVideodec2.so" \
+    "${vulkan_stub[@]}" \
     --module-sdk "$module_sdk" \
     --companion-sdk "$companion_sdk" --file-name eboot.elf
 
