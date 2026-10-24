@@ -39,7 +39,10 @@ public:
 
     void onResume() override;
 
-    inline static bool TV_MODE = false;
+    // The on-screen keyboard is what the console's players expect, so the page
+    // starts in the TV style; the setting (SettingItem::SEARCH_TV_MODE, which
+    // also defaults to on) can still turn it off.
+    inline static bool TV_MODE = true;
 
 private:
     BRLS_BIND(RecyclingGrid, recyclingGrid, "tv/search/keyboard");
