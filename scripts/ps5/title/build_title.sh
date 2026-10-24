@@ -291,6 +291,72 @@ done
 # stays a plain (unused) import instead, as before libc was linked.
 "$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$app_libc" dlfcn.o 2>/dev/null || true
 
+radv_archive=${PS5_RADV_ARCHIVE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/lib/libvulkan_radeon.ps5.a}
+radv_include=${PS5_RADV_INCLUDE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/include}
+platform_archive=${PS5_PLATFORM_ARCHIVE:-}
+if [[ -z "$platform_archive" ]]; then
+    for cand in "$PS5_PAYLOAD_SDK/target/lib/libps5platform.a" \
+                "$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/ps5-payload-sdk/target/lib/libps5platform.a" \
+                "$HOME/.cache/wiliwili-ps5/PS5_PayloadSDK/platform/build/ps5/libps5platform.a"; do
+        if [[ -f "$cand" ]]; then
+            platform_archive="$cand"
+            break
+        fi
+    done
+fi
+
+vulkan_enabled=0
+if [[ -f "$radv_archive" ]]; then
+    vulkan_enabled=1
+    echo "==> [title] Static RADV Vulkan pipeline enabled: $radv_archive"
+    compile c11 "$title_dir/ps5_vulkan_trampoline.c" "$work_dir/obj/ps5_vulkan_trampoline.o" -I "$radv_include"
+    if [[ ! -s "$work_dir/radv_stubs.ld" ]]; then
+        echo "==> [title] Generating weak symbol stubs for optional Vulkan entrypoints"
+        python3 - "$radv_archive" "$PS5_PAYLOAD_SDK/target/lib" "$PS5_OPENGL_PREFIX/lib" "$work_dir/radv_stubs.ld" << 'EOF'
+import sys, subprocess, glob
+
+archive, sdk_dir, gl_dir, out_ld = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+nm = "llvm-nm"
+for cand in ["/opt/homebrew/opt/llvm@18/bin/llvm-nm", "/usr/lib/llvm-18/bin/llvm-nm"]:
+    if subprocess.run(["test", "-x", cand]).returncode == 0:
+        nm = cand
+        break
+
+sdk_exports = set()
+for d in [sdk_dir, gl_dir]:
+    for so in glob.glob(d + "/*.so"):
+        try:
+            out = subprocess.check_output([nm, "-D", "--defined-only", so]).decode('utf-8', errors='ignore')
+            for line in out.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    sdk_exports.add(parts[-1])
+        except Exception:
+            pass
+
+radv_defined = set()
+radv_undefined = set()
+out = subprocess.check_output([nm, archive]).decode('utf-8', errors='ignore')
+for line in out.splitlines():
+    parts = line.strip().split()
+    if len(parts) >= 2:
+        code = parts[-2]
+        sym = parts[-1]
+        if code in ('T', 'D', 'B', 'R', 'C', 'V', 'W'):
+            radv_defined.add(sym)
+        elif code in ('U', 'w', 'v'):
+            radv_undefined.add(sym)
+
+truly_undefined = sorted(list(radv_undefined - radv_defined - sdk_exports))
+with open(out_ld, "w") as f:
+    f.write("/* Auto-generated PROVIDE stubs for unimplemented optional Mesa Vulkan entrypoints */\n")
+    for sym in truly_undefined:
+        if sym.isidentifier():
+            f.write(f"PROVIDE({sym} = 0);\n")
+EOF
+    fi
+fi
+
 # The OpenGL SDK's import libraries are handed to the converter as well, so the
 # driver's imports resolve to the console's own modules.
 group="$work_dir/libps5opengl-group.a"
@@ -329,7 +395,7 @@ while (( index < ${#tokens[@]} )); do
         -o)
             ((index += 1))
             ;;
-        -pthread | -lGL | -lSce*)
+        -pthread | -lGL | -lSce* | -lvulkan)
             : # provided by the stubs and the OpenGL group below
             ;;
         -lSDL2main)
@@ -371,11 +437,48 @@ cd "$build_dir"
 # private heap on top of the runtime module. readlink()/symlink()/link() are
 # routed to the console's own POSIX layer (libScePosixForWebKit), which is the
 # only module that offers them to a title.
+agc_prefix="$PS5_OPENGL_PREFIX/lib"
+if (( vulkan_enabled )) && [[ -f "$PS5_PAYLOAD_SDK/target/lib/libSceAgcDriver.so" ]]; then
+    agc_prefix="$PS5_PAYLOAD_SDK/target/lib"
+fi
+
 link_image() {
-    "$PS5_PAYLOAD_SDK/bin/prospero-lld" -T "$title_dir/ps5-pie.ld" --eh-frame-hdr \
+    local radv_objects=()
+    local radv_link_inputs=()
+    local radv_link_flags=()
+    local radv_script=()
+    if (( vulkan_enabled )); then
+        radv_script=(-T "$work_dir/radv_stubs.ld")
+        radv_objects=("$work_dir/obj/ps5_vulkan_trampoline.o")
+        radv_link_inputs=(--whole-archive "$radv_archive" --no-whole-archive "$platform_archive")
+        radv_link_flags=(--wrap=pthread_create --wrap=pthread_join --wrap=pthread_detach --wrap=fclose --wrap=fflush)
+        for name in qsort_r mkstemps openlog popen pclose open_memstream __xuname __assert \
+                __memset_chk regcomp regexec regfree regerror localtime_r newlocale freelocale \
+                strtod_l strtof_l dladdr utimensat localeconv_l strtoll_l strtoull_l strtold_l \
+                snprintf_l sscanf_l asprintf_l strcoll_l strxfrm_l strftime_l wcscoll_l wcsxfrm_l \
+                btowc_l wctob_l iswctype_l mbrlen_l mbrtowc_l mbsrtowcs_l mbsnrtowcs_l wcrtomb_l \
+                wcsnrtombs_l mbtowc_l ___mb_cur_max_l ___runetype_l ___tolower_l ___toupper_l \
+                __runes_for_locale catopen catgets catclose backtrace backtrace_symbols_fd \
+                __cxa_thread_atexit_impl; do
+            radv_link_flags+=("--defsym=$name=ps5_$name")
+        done
+        for name in arc4random arc4random_buf arc4random_uniform gmtime_r statvfs fstatvfs \
+                futimens clock_nanosleep getaddrinfo freeaddrinfo if_nameindex if_freenameindex \
+                opendir fdopendir readdir rewinddir dirfd closedir nl_langinfo nl_langinfo_l getpwuid_r \
+                posix_fallocate access \
+                openat unlinkat fchmodat fstatat mkdirat renameat memfd_create; do
+            radv_link_flags+=("--defsym=$name=ps5_$name")
+        done
+        for name in strcasestr mkstemp; do
+            radv_link_flags+=("--defsym=$name=ps5_$name")
+        done
+    fi
+
+    "$PS5_PAYLOAD_SDK/bin/prospero-lld" -T "$title_dir/ps5-pie.ld" "${radv_script[@]}" --eh-frame-hdr \
         --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free --wrap=posix_memalign \
         --wrap=malloc_usable_size --wrap=fopen \
         --wrap=readlink --wrap=symlink --wrap=link --wrap=fcntl \
+        "${radv_link_flags[@]}" \
         --version-script "$title_dir/app-symbols.map" \
         --exclude-libs=ALL -L "$work_dir" \
         -e _start --error-limit=0 -o "$work_dir/llvm-pie.elf" \
@@ -384,11 +487,13 @@ link_image() {
         "$work_dir/obj/crash_report.o" \
         "$work_dir/obj/locale_shims.o" "$work_dir/obj/libc_shims.o" \
         "$work_dir/obj/emutls.o" "$work_dir/obj/videodec2.o" \
-        "$work_dir/obj/videodec2_slots.o" "$work_dir/obj/ime_slots.o" "${objects[@]}" \
+        "$work_dir/obj/videodec2_slots.o" "$work_dir/obj/ime_slots.o" \
+        "${radv_objects[@]}" "${objects[@]}" \
+        "${radv_link_inputs[@]}" \
         --start-group "$group" "${archives[@]}" \
         "$app_libc" --end-group \
-        --as-needed "$PS5_OPENGL_PREFIX/lib/libSceAgc.so" \
-        "$PS5_OPENGL_PREFIX/lib/libSceAgcDriver.so" \
+        --as-needed "$agc_prefix/libSceAgc.so" \
+        "$agc_prefix/libSceAgcDriver.so" \
         "$work_dir/stubs/libSceVideodec2.so" \
         "$PS5_PAYLOAD_SDK"/target/lib/*.so
 }
@@ -410,13 +515,13 @@ link_image
 
 echo "==> [title] Converting and signing"
 vulkan_stub=()
-if [[ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so" ]]; then
+if (( ! vulkan_enabled )) && [[ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so" ]]; then
     vulkan_stub=(--stub "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so")
 fi
 "$PS5_NATIVE_TOOL" link --in "$work_dir/llvm-pie.elf" --out "$work_dir/eboot.elf" \
     --stub-dir "$PS5_PAYLOAD_SDK/target/lib" \
-    --stub "$PS5_OPENGL_PREFIX/lib/libSceAgc.so" \
-    --stub "$PS5_OPENGL_PREFIX/lib/libSceAgcDriver.so" \
+    --stub "$agc_prefix/libSceAgc.so" \
+    --stub "$agc_prefix/libSceAgcDriver.so" \
     --stub "$work_dir/stubs/libSceVideodec2.so" \
     "${vulkan_stub[@]}" \
     --module-sdk "$module_sdk" \
