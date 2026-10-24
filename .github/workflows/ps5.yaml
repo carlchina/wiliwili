@@ -20,9 +20,6 @@ concurrency:
   group: ps5-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -165,22 +162,3 @@ jobs:
         with:
           name: ${{ needs.version.outputs.DIST_PS5 }}-title
           path: package
-
-      # The artifact host is not reachable from every network, and a release
-      # asset is served from another one: the same folder is published as the
-      # download of a single release that carries the newest build.
-      - name: Publish the download
-        # a pull request publishes nothing; only the branches do
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag=ps5-latest
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "PS5 title (latest)" \
-              --notes "The newest build of the console title; see the commit in the workflow run."
-          fi
-          (cd package && zip -qr "$GITHUB_WORKSPACE/wiliwili-PS5-latest.zip" PPSA99099)
-          gh release upload "$tag" wiliwili-PS5-latest.zip \
-            --repo "$GITHUB_REPOSITORY" --clobber
