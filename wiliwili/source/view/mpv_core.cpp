@@ -889,7 +889,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     // draw video
     nvgBeginPath(vg);
     nvgRect(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
-    nvgFillPaint(vg, nvgImagePattern(vg, 0, 0, rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha));
+    nvgFillPaint(vg, nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha));
     nvgFill(vg);
 #elif defined(BOREALIS_USE_GXM)
     auto *vg = brls::Application::getNVGContext();

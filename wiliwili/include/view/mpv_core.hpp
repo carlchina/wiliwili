@@ -15,6 +15,12 @@
 #include <borealis/core/logger.hpp>
 #include <mpv/client.h>
 #include <mpv/render.h>
+#if defined(BOREALIS_USE_VULKAN)
+#ifndef MPV_SW_RENDER
+#define MPV_SW_RENDER
+#endif
+#endif
+
 #if defined(MPV_SW_RENDER)
 #elif defined(BOREALIS_USE_DEKO3D)
 #include <mpv/render_dk3d.h>

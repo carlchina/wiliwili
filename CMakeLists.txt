@@ -51,6 +51,10 @@ option(DISABLE_WEBP "Disable webp" OFF)
 # the home screen) instead of a payload started from the websrv launcher. See
 # scripts/ps5/title/README.md.
 cmake_dependent_option(PS5_NATIVE_TITLE "Build the PS5 target as a native title folder" OFF "PLATFORM_PS5" OFF)
+cmake_dependent_option(USE_VULKAN "Use Vulkan backend on PS5" ON "PLATFORM_PS5" OFF)
+if (USE_VULKAN)
+    list(APPEND APP_PLATFORM_OPTION -DBOREALIS_USE_VULKAN)
+endif ()
 
 # mpv related
 # If your system does not support OpenGL(ES), you can use software rendering, but it will affect performance.
@@ -212,6 +216,9 @@ if (PLATFORM_PS5)
     # The console's hardware video decoder lives in a system module that is
     # not loaded by default; the application loads it on startup.
     list(APPEND APP_PLATFORM_LIB SceSysmodule)
+    if (USE_VULKAN)
+        list(APPEND APP_PLATFORM_LIB vulkan SceAgc SceAgcDriver)
+    endif ()
 endif ()
 
 # source cpp
