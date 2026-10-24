@@ -89,7 +89,7 @@ hbmenu 自行选择路径。
 
 ### PS5
 
-下载 `wiliwili-PS5-v1.6.0.zip`，解压至 PS5 主机的 `/data/homebrew/` 目录下（完整路径为 `/data/homebrew/PPSA99099/`）：[wiliwili releases](https://github.com/carlchina/wiliwili/releases)
+下载 `wiliwili-PS5-v1.6.0.1.zip`，解压至 PS5 主机的 `/data/homebrew/` 目录下（完整路径为 `/data/homebrew/PPSA99099/`）：[wiliwili releases](https://github.com/carlchina/wiliwili/releases)
 
 重新加载 ShadowMountPlus（或重启主机），即可直接在 PS5 主屏幕启动 wiliwili 原生应用（也可以运行 `scripts/ps5/title/deploy.sh -h <PS5 的 IP>` 自动上传并刷新）。
 
