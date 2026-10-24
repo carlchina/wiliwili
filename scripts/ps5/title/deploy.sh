@@ -251,13 +251,26 @@ if [[ ${action} == "deploy" && -d "${HOME}/Downloads" ]]; then
     rm -rf "${HOME}/Downloads/${title_id}"
     cp -a "${artifact}" "${HOME}/Downloads/${title_id}"
     if command -v zip >/dev/null 2>&1; then
+        # The tag of this build, as the compiler saw it: the header is written
+        # into the build directory, so the base version is not repeated here.
+        build_tag=""
+        header="${PS5_TITLE_BUILD_DIR:-cmake-build-ps5-title}/include/build_version.h"
+        if [[ -f ${header} ]]; then
+            build_tag=$(sed -n 's/.*#define WILIWILI_BUILD_VERSION_TAG "\(.*\)"/\1/p' "${header}" | head -1)
+        fi
         (
             cd "${dist_dir}"
             rm -f "${HOME}/Downloads/${title_id}.zip" "${HOME}/Downloads/wiliwili-PS5-v1.6.0.zip"
             zip -rq -X "${HOME}/Downloads/${title_id}.zip" "${title_id}"
             cp -f "${HOME}/Downloads/${title_id}.zip" "${HOME}/Downloads/wiliwili-PS5-v1.6.0.zip"
+            if [[ -n "${build_tag}" ]]; then
+                cp -f "${HOME}/Downloads/${title_id}.zip" "${HOME}/Downloads/wiliwili-PS5-${build_tag}.zip"
+            fi
         )
         printf '==> [title] Created %s/Downloads/%s.zip\n' "${HOME}" "${title_id}"
         printf '==> [title] Created %s/Downloads/wiliwili-PS5-v1.6.0.zip\n' "${HOME}"
+        if [[ -n "${build_tag}" ]]; then
+            printf '==> [title] Created %s/Downloads/wiliwili-PS5-%s.zip\n' "${HOME}" "${build_tag}"
+        fi
     fi
 fi

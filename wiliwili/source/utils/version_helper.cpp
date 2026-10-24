@@ -17,6 +17,10 @@
 #include "api/bilibili/util/http.hpp"
 #include "fragment/latest_update.hpp"
 
+#if __has_include("build_version.h")
+#include "build_version.h"
+#endif
+
 using namespace brls::literals;
 
 #define STR_IMPL(x) #x
@@ -24,7 +28,11 @@ using namespace brls::literals;
 
 APPVersion::APPVersion() {
     git_commit = std::string(STR(BUILD_TAG_SHORT));
+#if defined(WILIWILI_BUILD_VERSION_TAG)
+    git_tag    = std::string(WILIWILI_BUILD_VERSION_TAG);
+#else
     git_tag    = std::string(STR(BUILD_TAG_VERSION));
+#endif
     major      = atoi(STR(BUILD_VERSION_MAJOR));
     minor      = atoi(STR(BUILD_VERSION_MINOR));
     revision   = atoi(STR(BUILD_VERSION_REVISION));

@@ -244,7 +244,38 @@ set_source_files_properties(
         wiliwili/source/view/mpv_core.cpp
         wiliwili/source/activity/setting_activity.cpp
         wiliwili/source/activity/dlna_activity.cpp
+        wiliwili/source/utils/version_helper.cpp
         PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+
+# Every build is stamped with a number, so two builds of the same commit can be
+# told apart in a bug report. The number lives in the build directory and never
+# goes backwards: it is one more than the last build here, and at least the
+# number of commits, which is what a fresh clone (the CI) starts from. cmake
+# writes the header itself, so no interpreter beyond cmake is needed and the
+# source tree is left untouched.
+execute_process(
+        COMMAND git rev-list --count HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE BUILD_NUMBER_SEED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+if (NOT BUILD_NUMBER_SEED MATCHES "^[0-9]+$")
+    set(BUILD_NUMBER_SEED 0)
+endif ()
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/include)
+
+add_custom_target(update_build_version
+        COMMAND ${CMAKE_COMMAND}
+                -DSEED=${BUILD_NUMBER_SEED}
+                -DBASE_VERSION=${APP_VERSION}
+                -DSTATE=${CMAKE_BINARY_DIR}/build_number.txt
+                -DHEADER=${CMAKE_BINARY_DIR}/include/build_version.h
+                -P ${CMAKE_SOURCE_DIR}/scripts/update_build_number.cmake
+        BYPRODUCTS ${CMAKE_BINARY_DIR}/include/build_version.h
+        COMMENT "Stamping the build number"
+)
+add_dependencies(${PROJECT_NAME} update_build_version)
 
 # building release file
 if (PLATFORM_DESKTOP)
