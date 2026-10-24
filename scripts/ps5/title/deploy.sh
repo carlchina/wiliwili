@@ -253,8 +253,21 @@ if [[ ${action} == "deploy" && -d "${HOME}/Downloads" ]]; then
     if command -v zip >/dev/null 2>&1; then
         # The tag of this build, as the compiler saw it: the header is written
         # into the build directory, so the base version is not repeated here.
+        # The build directory that made this folder is the one beside it - the
+        # verification run publishes dist-citest from cmake-build-ps5-citest -
+        # so the tag comes from there rather than from a build that is not the
+        # one being published.
         build_tag=""
-        header="${PS5_TITLE_BUILD_DIR:-cmake-build-ps5-title}/include/build_version.h"
+        build_dir=${PS5_TITLE_BUILD_DIR:-}
+        if [[ -z ${build_dir} ]]; then
+            dist_name=$(basename "${dist_dir}")
+            if [[ ${dist_name} == "dist" ]]; then
+                build_dir="cmake-build-ps5-title"
+            else
+                build_dir="cmake-build-ps5-${dist_name#dist-}"
+            fi
+        fi
+        header="${build_dir}/include/build_version.h"
         if [[ -f ${header} ]]; then
             build_tag=$(sed -n 's/.*#define WILIWILI_BUILD_VERSION_TAG "\(.*\)"/\1/p' "${header}" | head -1)
         fi
