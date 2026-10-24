@@ -53,5 +53,5 @@ private:
     BRLS_BIND(SVGImage, searchSVG, "tv/search/svg");
 
     brls::Event<std::string> updateSearchEvent;
-    std::wstring currentSearch;
+    std::string currentSearch;
 };
