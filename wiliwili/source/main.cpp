@@ -32,6 +32,9 @@ extern "C" void wiliwili_mark(const char *stage);
 extern "C" int sceKernelUsleep(unsigned microseconds);
 // Shows on-screen system notification (runtime_shims.c).
 extern "C" void wiliwili_ps5_notify(const char *message);
+// Ends the process without the exit handlers, for when the system service
+// that unloads a title refused to take it.
+extern "C" void _exit(int status);
 #endif
 
 int main(int argc, char* argv[]) {
@@ -167,19 +170,33 @@ int main(int argc, char* argv[]) {
 
         brls::Logger::info("mainLoop done");
 
-        // Cleanup curl and Check whether restart is required
-        ProgramConfig::instance().exit(argv);
-
 #ifdef PS5
+        // Nothing is released here: the console takes the whole process down
+        // with the title, and the cleanup the other platforms do is not free.
+        // It joins the network threads and releases the network library, and
+        // both work with threads the application started; once the main loop
+        // has returned there is nothing left to serve them, so the call can
+        // wait for ever. The title then stayed alive behind a black screen, and
+        // launching it again only brought back that same window. The log of
+        // such an exit ends at "mainLoop done", and the watch reports "the
+        // interface stopped in: run loop" ten seconds later.
+        brls::Logger::info("leaving the title");
+        fflush(nullptr);
+        wiliwili_mark("leaving title");
+
         // The console unloads a title through its system service. Without this
         // call the title's window stays on the screen and the console shows a
         // black frame instead of the home screen - the console's own dialog
         // asks whether to close the program, and then nothing happens.
-        brls::Logger::info("leaving the title");
-        wiliwili_mark("leaving title");
-        sceSystemServiceLoadExec("exit", nullptr);
-        for (;;)
-            sceKernelUsleep(1000000);
+        int rc = sceSystemServiceLoadExec("exit", nullptr);
+        // Reached only when the call failed: say so, and end the process the
+        // short way rather than leaving a window behind that nothing answers.
+        brls::Logger::error("sceSystemServiceLoadExec exit returned {:#x}", rc);
+        fflush(nullptr);
+        _exit(0);
+#else
+        // Cleanup curl and Check whether restart is required
+        ProgramConfig::instance().exit(argv);
 #endif
     } catch (const std::exception& e) {
         brls::Logger::error("Unhandled exception in main: {}", e.what());
