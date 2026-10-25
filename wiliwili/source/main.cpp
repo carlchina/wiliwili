@@ -22,6 +22,7 @@
 #endif
 
 #ifdef PS5
+#include <csignal>
 // The console unloads a title through its system service.
 extern "C" int sceSystemServiceLoadExec(const char* path, const char* argv[]);
 // The handle the platform kept for the console's own log (runtime_shims.c).
@@ -40,6 +41,7 @@ extern "C" void _exit(int status);
 int main(int argc, char* argv[]) {
 #ifdef PS5
     wiliwili_mark("main");
+    signal(SIGPIPE, SIG_IGN);
 #endif
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-d") == 0) {
