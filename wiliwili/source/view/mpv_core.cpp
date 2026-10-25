@@ -206,19 +206,32 @@ static inline float aspectConverter(const std::string &value) {
 }
 
 void MPVCore::on_update(void *self) {
+    static std::atomic<bool> update_in_flight{false};
+    if (update_in_flight.exchange(true)) return;
     brls::sync([]() {
+        update_in_flight = false;
         uint64_t flags = mpvRenderContextUpdate(MPVCore::instance().getContext());
 #if defined(MPV_NO_FB) || defined(BOREALIS_USE_DEKO3D) || defined(BOREALIS_USE_D3D11)
         // 直接绘制到屏幕上，需要屏幕每刷新一次绘制一次，在 MPVCore 的绘制函数内部处理
         (void)flags;
 #else
         // 绘制到 FBO、纹理、buffer...上，在主循环结尾进行绘制，MPVCore 的绘制函数内直接绘制对应的 FBO、纹理、buffer...
-        MPVCore::instance().redraw = flags & MPV_RENDER_UPDATE_FRAME;
-        if (MPVCore::instance().redraw) {
+        if (flags & MPV_RENDER_UPDATE_FRAME) {
+            MPVCore::instance().redraw = true;
 #ifdef MPV_SW_RENDER
             if (!MPVCore::instance().pixels) return;
+            static double swRenderMs = 0;
+            static double swRenderAt = 0;
+            double start = brls::getCPUTimeUsec() / 1000.0;
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
             mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
+            swRenderMs += brls::getCPUTimeUsec() / 1000.0 - start;
+            double now = brls::getCPUTimeUsec() / 1000.0;
+            if (now - swRenderAt > 1000.0) {
+                brls::Logger::info("mpv sw render: {:.1f} ms a second", swRenderMs);
+                swRenderMs = 0;
+                swRenderAt = now;
+            }
 #else
 #ifdef PS5
             // The cost of putting the picture on the screen: the picture goes
@@ -783,10 +796,23 @@ void MPVCore::setFrameSize(brls::Rect r) {
     int drawWidth  = rect.getWidth() * brls::Application::windowScale;
     int drawHeight = rect.getHeight() * brls::Application::windowScale;
     if (drawWidth == 0 || drawHeight == 0) return;
+
+    // For software rendering (especially on 4K output like PS5), cap the buffer to 1080p max.
+    // The GPU/NanoVG scales the 1080p texture to 4K in hardware at 0ms cost,
+    // avoiding massive 33MB CPU swscale and texture upload overhead on every frame.
+    const int maxW = 1920;
+    const int maxH = 1080;
+    if (drawWidth > maxW || drawHeight > maxH) {
+        float scale = std::min((float)maxW / drawWidth, (float)maxH / drawHeight);
+        drawWidth = (int)(drawWidth * scale);
+        drawHeight = (int)(drawHeight * scale);
+    }
+    drawWidth = (drawWidth + 15) & ~15;
+
     int frameSize = drawWidth * drawHeight;
 
     if (pixels != nullptr && frameSize > sw_size[0] * sw_size[1]) {
-        brls::Logger::debug("Enlarge video surface buffer");
+        brls::Logger::debug("Enlarge video surface buffer to {}x{}", drawWidth, drawHeight);
         free(pixels);
         pixels = nullptr;
     }
@@ -807,6 +833,7 @@ void MPVCore::setFrameSize(brls::Rect r) {
     // 在视频暂停时调整纹理尺寸，视频画面会被清空为黑色，强制重新绘制一次，避免这个问题
     mpvRenderContextRender(mpv_context, mpv_params);
     mpvRenderContextReportSwap(mpv_context);
+    this->redraw = true;
 #elif !defined(MPV_USE_FB)
         // Using default framebuffer
 #if defined(BOREALIS_USE_GXM)
@@ -879,7 +906,20 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     if (!pixels) return;
 
     auto *vg = brls::Application::getNVGContext();
-    nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
+    if (this->redraw) {
+        this->redraw = false;
+        static double nvgUpdateMs = 0;
+        static double nvgUpdateAt = 0;
+        double start = brls::getCPUTimeUsec() / 1000.0;
+        nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
+        nvgUpdateMs += brls::getCPUTimeUsec() / 1000.0 - start;
+        double now = brls::getCPUTimeUsec() / 1000.0;
+        if (now - nvgUpdateAt > 1000.0) {
+            brls::Logger::info("nvgUpdateImage: {:.1f} ms a second", nvgUpdateMs);
+            nvgUpdateMs = 0;
+            nvgUpdateAt = now;
+        }
+    }
 
     // draw black background
     nvgBeginPath(vg);
