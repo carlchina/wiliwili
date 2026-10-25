@@ -494,7 +494,7 @@ bool Decoder::open(Codec codec, int profile, int level, int width, int height)
                   (!mem.cpu_gpu_memory_size ||
                    memDirect(&impl->cpuGpu, mem.cpu_gpu_memory_size, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW)) &&
                   memDirect(&impl->frames, impl->frameSize * impl->frameCount, alignment,
-                            PROT_CHIP_POOL);
+                            PROT_CPU_RW | PROT_GPU_RW);
         for (int i = 0; ok && i < AU_SLOTS; i++)
             ok = memDirect(&impl->au[i], AU_SLOT_SIZE, PAGE_16K, PROT_CHIP_POOL);
         if (!ok) {
@@ -645,10 +645,12 @@ bool Decoder::decode(const uint8_t* annexb, size_t size, uint64_t pts, Picture& 
 
     const uint8_t* src    = (const uint8_t*)out.frame_buffer;
     size_t pitch          = out.frame_pitch_in_bytes ? out.frame_pitch_in_bytes : out.frame_width;
+    size_t surface_height = (out.frame_height + 63) & ~63;
+    size_t surface_luma   = pitch * surface_height;
     size_t lumaSize       = (size_t)pitch * out.frame_height;
-    size_t chromaHeight   = impl->tenBit ? out.frame_height / 2 : out.frame_height / 2;
+    size_t chromaHeight   = out.frame_height / 2;
     memcpy(buffer, src, lumaSize);
-    memcpy(buffer + lumaSize, src + lumaSize, (size_t)pitch * chromaHeight);
+    memcpy(buffer + lumaSize, src + surface_luma, (size_t)pitch * chromaHeight);
     impl->releaseFrameBuffer(fb.is_accepted);
 
     picture.data   = buffer;
@@ -684,12 +686,14 @@ bool Decoder::flush(Picture& picture, uint8_t* buffer, size_t bufferSize)
     if (!out.frame_buffer || needed > bufferSize)
         return false;
 
-    const uint8_t* src  = (const uint8_t*)out.frame_buffer;
-    size_t pitch        = out.frame_pitch_in_bytes ? out.frame_pitch_in_bytes : out.frame_width;
-    size_t lumaSize     = (size_t)pitch * out.frame_height;
-    size_t chromaHeight = out.frame_height / 2;
+    const uint8_t* src    = (const uint8_t*)out.frame_buffer;
+    size_t pitch          = out.frame_pitch_in_bytes ? out.frame_pitch_in_bytes : out.frame_width;
+    size_t surface_height = (out.frame_height + 63) & ~63;
+    size_t surface_luma   = pitch * surface_height;
+    size_t lumaSize       = (size_t)pitch * out.frame_height;
+    size_t chromaHeight   = out.frame_height / 2;
     memcpy(buffer, src, lumaSize);
-    memcpy(buffer + lumaSize, src + lumaSize, (size_t)pitch * chromaHeight);
+    memcpy(buffer + lumaSize, src + surface_luma, (size_t)pitch * chromaHeight);
     impl->releaseFrameBuffer(fb.is_accepted);
 
     picture.data   = buffer;

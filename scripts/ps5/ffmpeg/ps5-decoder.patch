@@ -31,7 +31,7 @@
 +++ b/libavcodec/ps5.c
 --- a/libavcodec/ps5.c
 +++ b/libavcodec/ps5.c
-@@ -0,0 +1,1568 @@
+@@ -0,0 +1,1608 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -618,7 +618,7 @@
 +                  memDirect(&ps5->cpuGpu, mem.cpu_gpu_memory_size, PAGE_16K, PROT_CPU_RW | PROT_GPU_RW) ==
 +                      0) &&
 +                 memDirect(&ps5->frames, ps5->frameSize * ps5->frameCount, alignment,
-+                           PROT_CHIP_POOL) == 0;
++                           PROT_CPU_RW | PROT_GPU_RW) == 0;
 +        for (int i = 0; ok && i < AU_SLOTS; i++)
 +            ok = memDirect(&ps5->au[i], AU_SLOT_SIZE, PAGE_16K, PROT_CHIP_POOL) == 0;
 +        if (ok) {
@@ -1214,16 +1214,31 @@
 +static int outputPicture(AVCodecContext* avctx, AVFrame* frame, const VdecOutput* out, int64_t pts)
 +{
 +    Ps5Context* ps5 = avctx->priv_data;
++    size_t pitch;
++    size_t surface_height;
++    size_t surface_luma;
++    size_t luma;
++    size_t chroma;
++    size_t needed;
++    int ret;
++    int64_t start;
++    uint32_t bpp;
++    uint32_t row_bytes;
++    const uint8_t* src_chroma;
++    uint32_t chroma_height;
++    uint32_t y;
 +
 +    if (out->is_error_frame || !out->frame_buffer || !out->frame_width || !out->frame_height) {
 +        av_log(avctx, AV_LOG_WARNING, "The console's video decoder: the picture is not there\n");
 +        return AVERROR_INVALIDDATA;
 +    }
 +
-+    size_t pitch   = out->frame_pitch_in_bytes ? out->frame_pitch_in_bytes : out->frame_width;
-+    size_t luma    = pitch * out->frame_height;
-+    size_t chroma  = pitch * (out->frame_height / 2);
-+    size_t needed  = luma + chroma;
++    pitch          = out->frame_pitch_in_bytes ? out->frame_pitch_in_bytes : out->frame_width;
++    surface_height = ps5->roomHeight ? (size_t)ps5->roomHeight : (size_t)((out->frame_height + 63) & ~63);
++    surface_luma   = pitch * surface_height;
++    luma           = pitch * out->frame_height;
++    chroma         = pitch * (out->frame_height / 2);
++    needed         = luma + chroma;
 +
 +    frame->format      = ps5->tenBit ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
 +    frame->width       = out->frame_width;
@@ -1231,20 +1246,45 @@
 +    frame->pts         = pts;
 +    frame->color_range = AVCOL_RANGE_MPEG;
 +
-+    AVBufferRef* buf = av_buffer_alloc(needed);
-+    if (!buf)
-+        return AVERROR(ENOMEM);
-+    frame->buf[0] = buf;
-+    frame->data[0] = buf->data;
-+    frame->linesize[0] = (int)pitch;
-+    frame->data[1]     = buf->data + luma;
-+    frame->linesize[1] = (int)pitch;
++    ret = ff_get_buffer(avctx, frame, 0);
++    if (ret < 0) {
++        AVBufferRef* buf = av_buffer_alloc(needed + AV_INPUT_BUFFER_PADDING_SIZE);
++        if (!buf)
++            return AVERROR(ENOMEM);
++        memset(buf->data + needed, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++        frame->buf[0] = buf;
++        frame->data[0] = buf->data;
++        frame->linesize[0] = (int)pitch;
++        frame->data[1]     = buf->data + luma;
++        frame->linesize[1] = (int)pitch;
++    }
 +
 +    // The picture comes out of the graphics memory: the copy back to the
 +    // processor is worth knowing about on a 4K video.
-+    int64_t start = av_gettime_relative();
-+    memcpy(frame->data[0], out->frame_buffer, luma);
-+    memcpy(frame->data[1], (const uint8_t*)out->frame_buffer + luma, chroma);
++    start = av_gettime_relative();
++    bpp = ps5->tenBit ? 2 : 1;
++    row_bytes = out->frame_width * bpp;
++    if (frame->linesize[0] == (int)pitch && pitch == row_bytes) {
++        memcpy(frame->data[0], out->frame_buffer, luma);
++    } else {
++        for (y = 0; y < out->frame_height; y++) {
++            memcpy(frame->data[0] + (size_t)y * frame->linesize[0],
++                   (const uint8_t*)out->frame_buffer + (size_t)y * pitch,
++                   row_bytes);
++        }
++    }
++
++    src_chroma = (const uint8_t*)out->frame_buffer + surface_luma;
++    chroma_height = out->frame_height / 2;
++    if (frame->linesize[1] == (int)pitch && pitch == row_bytes) {
++        memcpy(frame->data[1], src_chroma, chroma);
++    } else {
++        for (y = 0; y < chroma_height; y++) {
++            memcpy(frame->data[1] + (size_t)y * frame->linesize[1],
++                   src_chroma + (size_t)y * pitch,
++                   row_bytes);
++        }
++    }
 +    {
 +        static double copyMs = 0;
 +        static double copyAt = 0;
@@ -1600,33 +1640,3 @@
 +
 +PS5_DECODER(AV_CODEC_ID_H264, h264_ps5, "PS5 H.264 decoder", "h264_mp4toannexb");
 +PS5_DECODER(AV_CODEC_ID_HEVC, hevc_ps5, "PS5 HEVC decoder", "hevc_mp4toannexb");
---- a/libavcodec/ps5.h
-+++ b/libavcodec/ps5.h
-@@ -0,0 +1,27 @@
-+/*
-+ * This file is part of FFmpeg.
-+ *
-+ * FFmpeg is free software; you can redistribute it and/or
-+ * modify it under the terms of the GNU Lesser General Public
-+ * License as published by the Free Software Foundation; either
-+ * version 2.1 of the License, or (at your option) any later version.
-+ *
-+ * FFmpeg is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-+ * Lesser General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU Lesser General Public
-+ * License along with FFmpeg; if not, write to the Free Software
-+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
-+ */
-+
-+#ifndef AVCODEC_PS5_H
-+#define AVCODEC_PS5_H
-+
-+#include "libavcodec/codec.h"
-+
-+extern const FFCodec ff_h264_ps5_decoder;
-+extern const FFCodec ff_hevc_ps5_decoder;
-+
-+#endif /* AVCODEC_PS5_H */

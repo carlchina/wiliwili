@@ -840,13 +840,13 @@ void MPVCore::setFrameSize(brls::Rect r) {
 
     if (pixels == nullptr) {
         allocated_size     = (size_t)frameSize * PIXCEL_SIZE;
-        pixels             = malloc(allocated_size);
-        if (!pixels) {
+        if (posix_memalign(&pixels, 64, allocated_size + 64) != 0) {
+            pixels = nullptr;
             brls::Logger::error("Failed to allocate {} bytes for video surface buffer", allocated_size);
             allocated_size = 0;
             return;
         }
-        memset(pixels, 0, allocated_size);
+        memset(pixels, 0, allocated_size + 64);
         mpv_params[3].data = pixels;
     }
 
@@ -1415,11 +1415,7 @@ void MPVCore::reset() {
 #ifdef MPV_SW_RENDER
     if (pixels && sw_size[0] > 0 && sw_size[1] > 0) {
         memset(pixels, 0, (size_t)sw_size[0] * sw_size[1] * PIXCEL_SIZE);
-        auto *vg = brls::Application::getNVGContext();
-        if (vg && nvg_image) {
-            nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
-        }
-        this->redraw = false;
+        this->redraw = true;
     }
 #endif
 
@@ -1433,11 +1429,7 @@ void MPVCore::setUrl(const std::string &url, const std::string &extra, const std
 #ifdef MPV_SW_RENDER
     if (method == "replace" && pixels && sw_size[0] > 0 && sw_size[1] > 0) {
         memset(pixels, 0, (size_t)sw_size[0] * sw_size[1] * PIXCEL_SIZE);
-        auto *vg = brls::Application::getNVGContext();
-        if (vg && nvg_image) {
-            nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
-        }
-        this->redraw = false;
+        this->redraw = true;
     }
 #endif
     if (extra.empty()) {
