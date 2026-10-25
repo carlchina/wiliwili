@@ -281,6 +281,11 @@ public:
     int getHue() const;
 
     /**
+     * 设置硬解码开关
+     */
+    void setHardwareDecode(bool value);
+
+    /**
      * 设置硬解码模式
      * @param value 为真时将硬解码设置为 auto-copy, 为假时将硬解码设置为 各个平台默认值
      */

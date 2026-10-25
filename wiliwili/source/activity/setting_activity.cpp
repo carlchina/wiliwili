@@ -703,10 +703,7 @@ void SettingActivity::onContentAvailable() {
 #else
     btnHWDEC->init("wiliwili/setting/app/playback/hwdec"_i18n, conf.getBoolOption(SettingItem::PLAYER_HWDEC),
                    [](bool value) {
-                       ProgramConfig::instance().setSettingItem(SettingItem::PLAYER_HWDEC, value);
-                       if (MPVCore::HARDWARE_DEC == value) return;
-                       MPVCore::HARDWARE_DEC = value;
-                       MPVCore::instance().restart();
+                       MPVCore::instance().setHardwareDecode(value);
                    });
 #endif
 

@@ -444,17 +444,15 @@ void MPVCore::init() {
     // starts refusing allocations once it is used up. mpv's default network
     // cache alone is 150 MiB, which does not fit next to the decoder and the
     // renderer.
-    mpvSetOptionString(mpv, "vd-lavc-threads", "2");
-    mpvSetOptionString(mpv, "demuxer-max-bytes", "24M");
-    mpvSetOptionString(mpv, "demuxer-readahead-secs", "10");
-    mpvSetOptionString(mpv, "cache-secs", "30");
-    mpvSetOptionString(mpv, "vd-queue-enable", "no");
-    // The console takes the stacks of the threads from a pool of its own that
-    // is much smaller than the system has memory, and the kernel starts
-    // refusing allocations once it is used up. Fewer threads, less memory.
-    mpvSetOptionString(mpv, "audio-threads", "1");
-    mpvSetOptionString(mpv, "demuxer-threads", "0");
-    mpvSetOptionString(mpv, "vd-spawn", "no");
+    mpvSetOptionString(mpv, "vd-lavc-threads", "4");
+    mpvSetOptionString(mpv, "demuxer-max-bytes", "64M");
+    mpvSetOptionString(mpv, "demuxer-readahead-secs", "15");
+    mpvSetOptionString(mpv, "cache-secs", "60");
+    mpvSetOptionString(mpv, "vd-queue-enable", "yes");
+    mpvSetOptionString(mpv, "demuxer-threads", "1");
+    mpvSetOptionString(mpv, "vd-spawn", "yes");
+    mpvSetOptionString(mpv, "sws-scaler", "fast-bilinear");
+    mpvSetOptionString(mpv, "sws-fast", "yes");
 #elif defined(__PSV__)
     mpvSetOptionString(mpv, "vd-lavc-threads", "4");
     mpvSetOptionString(mpv, "fbo-format", "rgba8");
@@ -804,7 +802,7 @@ void MPVCore::setFrameSize(brls::Rect r) {
     auto info = this->getVideoInfo();
     int maxW = 1920;
     int maxH = 1080;
-    if (info.width > 1920 || info.height > 1080) {
+    if (!MPVCore::LOW_QUALITY && (info.width > 1920 || info.height > 1080)) {
         maxW = 3840;
         maxH = 2160;
     } else if (info.width > 0 && info.height > 0 && info.width <= 1280 && info.height <= 720) {
@@ -1396,6 +1394,22 @@ void MPVCore::reset() {
     this->mpv_error_code = 0;
     this->video_aspect   = aspectConverter(MPVCore::VIDEO_ASPECT);
 
+    {
+        std::lock_guard<std::mutex> lock(videoInfoMutex);
+        videoInfo = {};
+    }
+
+#ifdef MPV_SW_RENDER
+    if (pixels && sw_size[0] > 0 && sw_size[1] > 0) {
+        memset(pixels, 0, (size_t)sw_size[0] * sw_size[1] * PIXCEL_SIZE);
+        auto *vg = brls::Application::getNVGContext();
+        if (vg && nvg_image) {
+            nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
+        }
+        this->redraw = false;
+    }
+#endif
+
     // 软硬解切换后应该手动设置一次渲染尺寸
     // 切换视频前设置渲染尺寸可以顺便将上一条视频的最后一帧画面清空
     setFrameSize(rect);
@@ -1403,6 +1417,16 @@ void MPVCore::reset() {
 
 void MPVCore::setUrl(const std::string &url, const std::string &extra, const std::string &method) {
     brls::Logger::debug("{} Url: {}, extra: {}", method, url, extra);
+#ifdef MPV_SW_RENDER
+    if (method == "replace" && pixels && sw_size[0] > 0 && sw_size[1] > 0) {
+        memset(pixels, 0, (size_t)sw_size[0] * sw_size[1] * PIXCEL_SIZE);
+        auto *vg = brls::Application::getNVGContext();
+        if (vg && nvg_image) {
+            nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
+        }
+        this->redraw = false;
+    }
+#endif
     if (extra.empty()) {
         command_async("loadfile", url, method);
     } else {
@@ -1483,14 +1507,22 @@ void MPVCore::setMirror(bool value) {
 #endif
 }
 
-void MPVCore::setHwdecCopyMode(bool value) {
+void MPVCore::setHardwareDecode(bool value) {
+    ProgramConfig::instance().setSettingItem(SettingItem::PLAYER_HWDEC, value);
+    MPVCore::HARDWARE_DEC = value;
 #if defined(PS5)
-    if (MPVCore::HARDWARE_DEC) {
-        std::string vd = value ? MPVCore::PLAYER_HWDEC_METHOD : "auto";
-        command_async("set", "vd", vd);
-        brls::Logger::info("MPV video decoder: {}", vd);
-    }
+    std::string vd = value ? PLAYER_HWDEC_METHOD : "auto";
+    command_async("set", "vd", vd);
+    brls::Logger::info("MPV video decoder: {}", vd);
 #else
+    std::string hwdec = value ? PLAYER_HWDEC_METHOD : "no";
+    command_async("set", "hwdec", hwdec);
+    brls::Logger::info("MPV hardware decode: {}", hwdec);
+#endif
+}
+
+void MPVCore::setHwdecCopyMode(bool value) {
+#if !defined(PS5)
     // 如果正在使用硬解，那么将硬解更新为 auto-copy，避免直接硬解因为不经过 cpu 处理导致镜像翻转、滤镜无效
     if (MPVCore::HARDWARE_DEC) {
         std::string hwdec = value ? "auto-copy" : MPVCore::PLAYER_HWDEC_METHOD;
