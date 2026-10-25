@@ -141,7 +141,6 @@ compile c11 "$title_dir/runtime_shims.c" "$work_dir/obj/runtime_shims.o"
 compile c++20 "$title_dir/crash_report.cpp" "$work_dir/obj/crash_report.o" -fexceptions
 compile c11 "$title_dir/locale_shims.c" "$work_dir/obj/locale_shims.o"
 compile c11 "$title_dir/libc_shims.c" "$work_dir/obj/libc_shims.o"
-compile c11 "$title_dir/ps5_dns.c" "$work_dir/obj/ps5_dns.o"
 # The statically linked OpenGL implementation keeps its context in emulated TLS,
 # which the console does not implement.
 compile c11 "$title_dir/emutls.c" "$work_dir/obj/emutls.o"
@@ -250,7 +249,7 @@ write_import_slots() {
 app_libc="$work_dir/libc-app.a"
 cp -- "$PS5_PAYLOAD_SDK/target/lib/libc.a" "$app_libc"
 shim_objects="$work_dir/obj/runtime_shims.o $work_dir/obj/libc_shims.o \
-$work_dir/obj/locale_shims.o $work_dir/obj/ps5_dns.o"
+$work_dir/obj/locale_shims.o"
 "$llvm_bin/llvm-nm" --defined-only $shim_objects 2>/dev/null |
     sed 's/.* //' | sort -u > "$work_dir/libc-patch-shims.txt"
 "$llvm_bin/llvm-nm" --defined-only \
@@ -452,9 +451,7 @@ link_image() {
         radv_script=(-T "$work_dir/radv_stubs.ld")
         radv_objects=("$work_dir/obj/ps5_vulkan_trampoline.o")
         radv_link_inputs=(--whole-archive "$radv_archive" --no-whole-archive "$platform_archive")
-        radv_link_flags=(--wrap=pthread_create --wrap=pthread_join --wrap=pthread_detach --wrap=fclose --wrap=fflush \
-            --wrap=ps5_getaddrinfo --wrap=ps5_freeaddrinfo --wrap=ps5_gai_strerror \
-            --wrap=ps5_getnameinfo --wrap=ps5_gethostbyname --wrap=ps5_gethostbyaddr)
+        radv_link_flags=(--wrap=pthread_create --wrap=pthread_join --wrap=pthread_detach --wrap=fclose --wrap=fflush)
         for name in qsort_r mkstemps openlog popen pclose open_memstream __xuname __assert \
                 __memset_chk regcomp regexec regfree regerror localtime_r newlocale freelocale \
                 strtod_l strtof_l dladdr utimensat localeconv_l strtoll_l strtoull_l strtold_l \
@@ -466,8 +463,7 @@ link_image() {
             radv_link_flags+=("--defsym=$name=ps5_$name")
         done
         for name in arc4random arc4random_buf arc4random_uniform gmtime_r statvfs fstatvfs \
-                futimens clock_nanosleep getaddrinfo freeaddrinfo if_nameindex if_freenameindex \
-                gai_strerror getnameinfo gethostbyname gethostbyaddr \
+                futimens clock_nanosleep if_nameindex if_freenameindex \
                 opendir fdopendir readdir rewinddir dirfd closedir nl_langinfo nl_langinfo_l getpwuid_r \
                 posix_fallocate access \
                 openat unlinkat fchmodat fstatat mkdirat renameat memfd_create; do
@@ -490,7 +486,6 @@ link_image() {
         "$work_dir/obj/app_heap.o" "$work_dir/obj/runtime_shims.o" \
         "$work_dir/obj/crash_report.o" \
         "$work_dir/obj/locale_shims.o" "$work_dir/obj/libc_shims.o" \
-        "$work_dir/obj/ps5_dns.o" \
         "$work_dir/obj/emutls.o" "$work_dir/obj/videodec2.o" \
         "$work_dir/obj/videodec2_slots.o" "$work_dir/obj/ime_slots.o" \
         "${radv_objects[@]}" "${objects[@]}" \
