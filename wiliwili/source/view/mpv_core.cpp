@@ -444,13 +444,14 @@ void MPVCore::init() {
     // starts refusing allocations once it is used up. mpv's default network
     // cache alone is 150 MiB, which does not fit next to the decoder and the
     // renderer.
-    mpvSetOptionString(mpv, "vd-lavc-threads", "4");
-    mpvSetOptionString(mpv, "demuxer-max-bytes", "64M");
-    mpvSetOptionString(mpv, "demuxer-readahead-secs", "15");
-    mpvSetOptionString(mpv, "cache-secs", "60");
-    mpvSetOptionString(mpv, "vd-queue-enable", "yes");
-    mpvSetOptionString(mpv, "demuxer-threads", "1");
-    mpvSetOptionString(mpv, "vd-spawn", "yes");
+    mpvSetOptionString(mpv, "vd-lavc-threads", "2");
+    mpvSetOptionString(mpv, "demuxer-max-bytes", "32M");
+    mpvSetOptionString(mpv, "demuxer-readahead-secs", "10");
+    mpvSetOptionString(mpv, "cache-secs", "30");
+    mpvSetOptionString(mpv, "vd-queue-enable", "no");
+    mpvSetOptionString(mpv, "audio-threads", "1");
+    mpvSetOptionString(mpv, "demuxer-threads", "0");
+    mpvSetOptionString(mpv, "vd-spawn", "no");
     mpvSetOptionString(mpv, "sws-scaler", "fast-bilinear");
     mpvSetOptionString(mpv, "sws-fast", "yes");
 #elif defined(__PSV__)
@@ -802,7 +803,8 @@ void MPVCore::setFrameSize(brls::Rect r) {
     auto info = this->getVideoInfo();
     int maxW = 1920;
     int maxH = 1080;
-    if (!MPVCore::LOW_QUALITY && (info.width > 1920 || info.height > 1080)) {
+    bool is_high_fps = (info.fps > 35.0);
+    if (!MPVCore::LOW_QUALITY && !is_high_fps && (info.width > 1920 || info.height > 1080)) {
         maxW = 3840;
         maxH = 2160;
     } else if (info.width > 0 && info.height > 0 && info.width <= 1280 && info.height <= 720) {
@@ -835,6 +837,11 @@ void MPVCore::setFrameSize(brls::Rect r) {
     if (pixels == nullptr) {
         allocated_size     = (size_t)frameSize * PIXCEL_SIZE;
         pixels             = malloc(allocated_size);
+        if (!pixels) {
+            brls::Logger::error("Failed to allocate {} bytes for video surface buffer", allocated_size);
+            allocated_size = 0;
+            return;
+        }
         mpv_params[3].data = pixels;
     }
 

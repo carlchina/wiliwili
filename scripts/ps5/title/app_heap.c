@@ -43,7 +43,7 @@ int32_t sceKernelMapDirectMemory(void **address, size_t length, int protection,
  * megabyte each and the video keeps its frames in the same heap. With 128 MiB
  * the heap filled up before a video could show its first frame: the pictures
  * stopped decoding and the video stayed black. */
-__attribute__((weak)) const size_t ps5_opengl_heap_size = 512u * 1024u * 1024u;
+__attribute__((weak)) const size_t ps5_opengl_heap_size = 1024u * 1024u * 1024u;
 /* A title may define ps5_opengl_heap_zero_fill as 1: malloc, posix_memalign and
  * the growth of realloc then return zero-filled memory, so code that reads heap
  * memory it never wrote behaves the same on every run. */
