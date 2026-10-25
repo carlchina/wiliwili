@@ -203,7 +203,7 @@ std::unordered_map<SettingItem, ProgramOption> ProgramConfig::SETTING_MAP = {
     {SettingItem::PS5_HWDEC_TEST, {"ps5_hwdec_test", {}, {}, 0}},
     {SettingItem::PLAYER_SKIP_OPENING_CREDITS, {"player_skip_opening_credits", {}, {}, 1}},
     {SettingItem::PLAYER_LOW_QUALITY, {"player_low_quality", {}, {}, 1}},
-#if defined(IOS) || defined(__PSV__) || defined(__SWITCH__)
+#if defined(IOS) || defined(__PSV__) || defined(__SWITCH__) || defined(PS5)
     {SettingItem::PLAYER_HWDEC, {"player_hwdec", {}, {}, 1}},
 #else
     {SettingItem::PLAYER_HWDEC, {"player_hwdec", {}, {}, 0}},

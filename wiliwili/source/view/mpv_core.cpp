@@ -400,6 +400,9 @@ void MPVCore::init() {
     if (HARDWARE_DEC) {
         mpvSetOptionString(mpv, "vd", PLAYER_HWDEC_METHOD.c_str());
         brls::Logger::info("MPV video decoder: {}", PLAYER_HWDEC_METHOD);
+    } else {
+        mpvSetOptionString(mpv, "vd", "auto");
+        brls::Logger::info("MPV video decoder: auto");
     }
 #else
     if (HARDWARE_DEC) {
@@ -1259,6 +1262,11 @@ void MPVCore::eventMainLoop() {
                             std::lock_guard<std::mutex> lock(videoInfoMutex);
                             // 没有视频时 mpv 发来空值，界面据此隐藏这些参数
                             videoInfo.codec = data ? *(char **)data : "";
+#if defined(PS5)
+                            if (videoInfo.codec.find("ps5") != std::string::npos) {
+                                videoInfo.hwdec = "ps5";
+                            }
+#endif
                         }
                         break;
                     case 23:
@@ -1413,12 +1421,20 @@ void MPVCore::setMirror(bool value) {
 }
 
 void MPVCore::setHwdecCopyMode(bool value) {
+#if defined(PS5)
+    if (MPVCore::HARDWARE_DEC) {
+        std::string vd = value ? MPVCore::PLAYER_HWDEC_METHOD : "auto";
+        command_async("set", "vd", vd);
+        brls::Logger::info("MPV video decoder: {}", vd);
+    }
+#else
     // 如果正在使用硬解，那么将硬解更新为 auto-copy，避免直接硬解因为不经过 cpu 处理导致镜像翻转、滤镜无效
     if (MPVCore::HARDWARE_DEC) {
         std::string hwdec = value ? "auto-copy" : MPVCore::PLAYER_HWDEC_METHOD;
         command_async("set", "hwdec", hwdec);
         brls::Logger::info("MPV hardware decode: {}", hwdec);
     }
+#endif
 }
 
 void MPVCore::setBrightness(int value) {
