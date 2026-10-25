@@ -264,6 +264,13 @@ scripts/ps5/title/deploy.sh -h <ps5-ip>   # upload PPSA99099 to /data/homebrew/P
 `PS5_PAYLOAD_SDK` points at an existing SDK to skip the download. wiliwili runs as a native
 homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
 
+#### PS5 Hardware Decoder & Vulkan Pipeline Notes
+- **Direct Memory Permissions**: Hardware decoder frame buffers (`ps5->frames`) MUST be mapped with `PROT_CPU_RW | PROT_GPU_RW` (`0x33`). Using `PROT_CHIP_POOL` (`0x32`, write-only for CPU) causes CPU reads (`memcpy`) to trigger kernel exception `0xa0020328 (SYSTEM_XO_VIOLATION)` on Prospero.
+- **Surface Stride & Height**: `sceVideodec2` hardware decoder surfaces align height to 64 pixels (`(height + 63) & ~63`). Semi-planar NV12 Chroma (UV) begins at offset `pitch * surface_height`, NOT display height.
+- **MPV Software Rendering (`MPV_SW_RENDER`)**: Under `BOREALIS_USE_VULKAN`, MPV renders to a CPU buffer (`pixels`) aligned to 64 bytes via `posix_memalign(..., 64, size + 64)`. Rendering surface is capped at 1080p to prevent 4K memory bandwidth bottlenecks; GPU shaders scale it to 4K output without CPU cost.
+- **Frame Boundaries**: `nvgUpdateImage` must only be invoked within the rendering loop (`draw()`), never out-of-band in `reset()` or `setUrl()`.
+
+
 ### Useful CMake flags
 | Flag | Purpose |
 |---|---|
