@@ -797,28 +797,46 @@ void MPVCore::setFrameSize(brls::Rect r) {
     int drawHeight = rect.getHeight() * brls::Application::windowScale;
     if (drawWidth == 0 || drawHeight == 0) return;
 
-    // For software rendering (especially on 4K output like PS5), cap the buffer to 1080p max.
-    // The GPU/NanoVG scales the 1080p texture to 4K in hardware at 0ms cost,
-    // avoiding massive 33MB CPU swscale and texture upload overhead on every frame.
-    const int maxW = 1920;
-    const int maxH = 1080;
+    // For software rendering:
+    // Never upscale in software beyond the video stream's native resolution.
+    // The GPU handles scaling to the 4K screen resolution in hardware at zero CPU cost.
+    // If the video is native 4K, allow full 4K (3840x2160); if 1080p, cap to 1080p; if 720p, cap to 720p.
+    auto info = this->getVideoInfo();
+    int maxW = 1920;
+    int maxH = 1080;
+    if (info.width > 1920 || info.height > 1080) {
+        maxW = 3840;
+        maxH = 2160;
+    } else if (info.width > 0 && info.height > 0 && info.width <= 1280 && info.height <= 720) {
+        maxW = 1280;
+        maxH = 720;
+    }
     if (drawWidth > maxW || drawHeight > maxH) {
         float scale = std::min((float)maxW / drawWidth, (float)maxH / drawHeight);
         drawWidth = (int)(drawWidth * scale);
         drawHeight = (int)(drawHeight * scale);
     }
-    drawWidth = (drawWidth + 15) & ~15;
+    drawWidth  = (drawWidth + 15) & ~15;
+    drawHeight = (drawHeight + 1) & ~1;
+
+    // Skip recreation if dimensions haven't changed
+    if (sw_size[0] == drawWidth && sw_size[1] == drawHeight && nvg_image != 0) {
+        return;
+    }
 
     int frameSize = drawWidth * drawHeight;
+    static size_t allocated_size = 0;
 
-    if (pixels != nullptr && frameSize > sw_size[0] * sw_size[1]) {
+    if (pixels != nullptr && (size_t)frameSize * PIXCEL_SIZE > allocated_size) {
         brls::Logger::debug("Enlarge video surface buffer to {}x{}", drawWidth, drawHeight);
         free(pixels);
         pixels = nullptr;
+        allocated_size = 0;
     }
 
     if (pixels == nullptr) {
-        pixels             = malloc(frameSize * PIXCEL_SIZE);
+        allocated_size     = (size_t)frameSize * PIXCEL_SIZE;
+        pixels             = malloc(allocated_size);
         mpv_params[3].data = pixels;
     }
 
@@ -1325,6 +1343,11 @@ void MPVCore::eventMainLoop() {
                         if (data) {
                             std::lock_guard<std::mutex> lock(videoInfoMutex);
                             videoInfo.height = *(int64_t *)data;
+#ifdef MPV_SW_RENDER
+                            brls::sync([this]() {
+                                this->setFrameSize(this->rect);
+                            });
+#endif
                         }
                         break;
                     case 26:
