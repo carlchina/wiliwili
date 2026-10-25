@@ -659,6 +659,21 @@ void MPVCore::clean() {
         mpvTerminateDestroy(this->mpv);
         this->mpv = nullptr;
     }
+
+#ifdef MPV_SW_RENDER
+    if (pixels) {
+        free(pixels);
+        pixels = nullptr;
+        allocated_size = 0;
+        mpv_params[3].data = nullptr;
+    }
+    if (nvg_image) {
+        nvgDeleteImage(brls::Application::getNVGContext(), nvg_image);
+        nvg_image = 0;
+    }
+    sw_size[0] = 0;
+    sw_size[1] = 0;
+#endif
 }
 
 void MPVCore::restart() {
@@ -796,21 +811,11 @@ void MPVCore::setFrameSize(brls::Rect r) {
     int drawHeight = rect.getHeight() * brls::Application::windowScale;
     if (drawWidth == 0 || drawHeight == 0) return;
 
-    // For software rendering:
-    // Never upscale in software beyond the video stream's native resolution.
-    // The GPU handles scaling to the 4K screen resolution in hardware at zero CPU cost.
-    // If the video is native 4K, allow full 4K (3840x2160); if 1080p, cap to 1080p; if 720p, cap to 720p.
-    auto info = this->getVideoInfo();
-    int maxW = 1920;
-    int maxH = 1080;
-    bool is_high_fps = (info.fps > 35.0);
-    if (!MPVCore::LOW_QUALITY && !is_high_fps && (info.width > 1920 || info.height > 1080)) {
-        maxW = 3840;
-        maxH = 2160;
-    } else if (info.width > 0 && info.height > 0 && info.width <= 1280 && info.height <= 720) {
-        maxW = 1280;
-        maxH = 720;
-    }
+    // 限制最大渲染缓冲为 1080p，避免 4k 渲染及 CPU 内存带宽卡顿 (3840x2160 每帧需要 33MB memcpy)
+    // 1080p 仅需 8.3MB，PS5 AMD GPU 在着色器中无损拉伸到 4K 屏幕 (0ms CPU 开销，流畅 60fps)
+    // 且固定 1080p 后在切换分辨率时尺寸不变，不销毁/重建纹理，杜绝纹理重建导致的闪退
+    const int maxW = 1920;
+    const int maxH = 1080;
     if (drawWidth > maxW || drawHeight > maxH) {
         float scale = std::min((float)maxW / drawWidth, (float)maxH / drawHeight);
         drawWidth = (int)(drawWidth * scale);
@@ -825,7 +830,6 @@ void MPVCore::setFrameSize(brls::Rect r) {
     }
 
     int frameSize = drawWidth * drawHeight;
-    static size_t allocated_size = 0;
 
     if (pixels != nullptr && (size_t)frameSize * PIXCEL_SIZE > allocated_size) {
         brls::Logger::debug("Enlarge video surface buffer to {}x{}", drawWidth, drawHeight);
@@ -842,10 +846,14 @@ void MPVCore::setFrameSize(brls::Rect r) {
             allocated_size = 0;
             return;
         }
+        memset(pixels, 0, allocated_size);
         mpv_params[3].data = pixels;
     }
 
-    if (nvg_image) nvgDeleteImage(brls::Application::getNVGContext(), nvg_image);
+    if (nvg_image) {
+        nvgDeleteImage(brls::Application::getNVGContext(), nvg_image);
+        nvg_image = 0;
+    }
     nvg_image = nvgCreateImageRGBA(brls::Application::getNVGContext(), drawWidth, drawHeight, mpvImageFlags,
                                    (const unsigned char *)pixels);
 
@@ -853,10 +861,13 @@ void MPVCore::setFrameSize(brls::Rect r) {
     sw_size[1] = drawHeight;
     pitch      = PIXCEL_SIZE * drawWidth;
 
-    // 在视频暂停时调整纹理尺寸，视频画面会被清空为黑色，强制重新绘制一次，避免这个问题
-    mpvRenderContextRender(mpv_context, mpv_params);
-    mpvRenderContextReportSwap(mpv_context);
-    this->redraw = true;
+    // 只有在视频暂停时调整纹理尺寸才需要强制渲染一次（视频画面会被清空为黑色）
+    // 播放中绝对不能主动调用 mpvRenderContextRender，否则在视频切换/切分辨率时会导致滤镜链崩溃
+    if (this->video_paused && !this->video_stopped) {
+        mpvRenderContextRender(mpv_context, mpv_params);
+        mpvRenderContextReportSwap(mpv_context);
+        this->redraw = true;
+    }
 #elif !defined(MPV_USE_FB)
         // Using default framebuffer
 #if defined(BOREALIS_USE_GXM)
@@ -1348,11 +1359,6 @@ void MPVCore::eventMainLoop() {
                         if (data) {
                             std::lock_guard<std::mutex> lock(videoInfoMutex);
                             videoInfo.height = *(int64_t *)data;
-#ifdef MPV_SW_RENDER
-                            brls::sync([this]() {
-                                this->setFrameSize(this->rect);
-                            });
-#endif
                         }
                         break;
                     case 26:

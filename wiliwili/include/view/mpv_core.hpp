@@ -455,6 +455,7 @@ private:
     int sw_size[2]                 = {1920, 1080};
     size_t pitch                   = PIXCEL_SIZE * sw_size[0];
     void *pixels                   = nullptr;
+    size_t allocated_size          = 0;
     bool redraw                    = false;
     mpv_render_param mpv_params[5] = {
         {MPV_RENDER_PARAM_SW_SIZE, &sw_size[0]}, {MPV_RENDER_PARAM_SW_FORMAT, (void *)sw_format},
