@@ -457,9 +457,11 @@ private:
     void *pixels                   = nullptr;
     size_t allocated_size          = 0;
     bool redraw                    = false;
-    mpv_render_param mpv_params[5] = {
+    int sw_block_target_time       = 0;
+    mpv_render_param mpv_params[6] = {
         {MPV_RENDER_PARAM_SW_SIZE, &sw_size[0]}, {MPV_RENDER_PARAM_SW_FORMAT, (void *)sw_format},
         {MPV_RENDER_PARAM_SW_STRIDE, &pitch},    {MPV_RENDER_PARAM_SW_POINTER, pixels},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &sw_block_target_time},
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
 #elif defined(BOREALIS_USE_DEKO3D)

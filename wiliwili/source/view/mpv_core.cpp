@@ -16,6 +16,8 @@
 #include "utils/crash_helper.hpp"
 #include "view/mpv_core.hpp"
 
+#define XO_TRACE(...)
+
 #ifdef MPV_BUNDLE_DLL
 mpvSetOptionStringFunc mpvSetOptionString;
 mpvObservePropertyFunc mpvObserveProperty;
@@ -207,11 +209,43 @@ static inline float aspectConverter(const std::string &value) {
 
 void MPVCore::on_update(void *self) {
     static std::atomic<bool> update_in_flight{false};
-    if (update_in_flight.exchange(true)) return;
+#ifdef PS5
+    // 画面不来时只有两种可能：播放器没有帧可以给，或者没有人向它要帧。
+    // 把两边都数下来，日志才能指出是哪一种。
+    static std::atomic<long> updateCalls{0};
+    static std::atomic<long> updateBusy{0};
+    static std::atomic<long> updateFrame{0};
+    static std::atomic<long> updateIdle{0};
+    updateCalls += 1;
+#endif
+    if (update_in_flight.exchange(true)) {
+#ifdef PS5
+        updateBusy += 1;
+#endif
+        return;
+    }
     brls::sync([]() {
         update_in_flight = false;
+        XO_TRACE("ui: update task");
         uint64_t flags = mpvRenderContextUpdate(MPVCore::instance().getContext());
-#if defined(MPV_NO_FB) || defined(BOREALIS_USE_DEKO3D) || defined(BOREALIS_USE_D3D11)
+        XO_TRACE("ui: update flags=%llu", (unsigned long long)flags);
+#ifdef PS5
+        if (flags & MPV_RENDER_UPDATE_FRAME) {
+            updateFrame += 1;
+        } else {
+            updateIdle += 1;
+        }
+        {
+            static double updateAt = 0;
+            double updateNow = brls::getCPUTimeUsec() / 1000.0;
+            if (updateNow - updateAt > 1000.0) {
+                updateAt = updateNow;
+                brls::Logger::info("mpv update: calls={} busy={} frame={} idle={}", (long)updateCalls, (long)updateBusy,
+                                   (long)updateFrame, (long)updateIdle);
+            }
+        }
+#endif
+#if defined(PS5) || defined(MPV_NO_FB) || defined(BOREALIS_USE_DEKO3D) || defined(BOREALIS_USE_D3D11)
         // 直接绘制到屏幕上，需要屏幕每刷新一次绘制一次，在 MPVCore 的绘制函数内部处理
         (void)flags;
 #else
@@ -223,8 +257,11 @@ void MPVCore::on_update(void *self) {
             static double swRenderMs = 0;
             static double swRenderAt = 0;
             double start = brls::getCPUTimeUsec() / 1000.0;
+            XO_TRACE("ui: sw render enter");
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
+            XO_TRACE("ui: sw render done");
             mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
+            XO_TRACE("ui: sw swap done");
             swRenderMs += brls::getCPUTimeUsec() / 1000.0 - start;
             double now = brls::getCPUTimeUsec() / 1000.0;
             if (now - swRenderAt > 1000.0) {
@@ -414,8 +451,8 @@ void MPVCore::init() {
         mpvSetOptionString(mpv, "vd", PLAYER_HWDEC_METHOD.c_str());
         brls::Logger::info("MPV video decoder: {}", PLAYER_HWDEC_METHOD);
     } else {
-        mpvSetOptionString(mpv, "vd", "auto");
-        brls::Logger::info("MPV video decoder: auto");
+        mpvSetOptionString(mpv, "vd", "!h264_ps5,!hevc_ps5,auto");
+        brls::Logger::info("MPV video decoder: auto (sw)");
     }
 #else
     if (HARDWARE_DEC) {
@@ -444,7 +481,8 @@ void MPVCore::init() {
     // starts refusing allocations once it is used up. mpv's default network
     // cache alone is 150 MiB, which does not fit next to the decoder and the
     // renderer.
-    mpvSetOptionString(mpv, "vd-lavc-threads", "2");
+    mpvSetOptionString(mpv, "vd-lavc-threads", "4");
+    mpvSetOptionString(mpv, "vd-lavc-fast", "yes");
     mpvSetOptionString(mpv, "demuxer-max-bytes", "32M");
     mpvSetOptionString(mpv, "demuxer-readahead-secs", "10");
     mpvSetOptionString(mpv, "cache-secs", "30");
@@ -469,9 +507,7 @@ void MPVCore::init() {
     // mpvSetOptionString(mpv, "msg-level", "ffmpeg=trace");
     // mpvSetOptionString(mpv, "msg-level", "all=no");
 #if defined(PS5)
-    // The console's video decoder says what it does through FFmpeg's log, and
-    // the player keeps it: the messages are the only way to tell that the
-    // chip refused a stream.
+    mpvSetOptionString(mpv, "terminal", "no");
     mpvSetOptionString(mpv, "msg-level", "ffmpeg=info");
 #endif
     if (MPVCore::TERMINAL) {
@@ -853,9 +889,12 @@ void MPVCore::setFrameSize(brls::Rect r) {
     if (nvg_image) {
         nvgDeleteImage(brls::Application::getNVGContext(), nvg_image);
         nvg_image = 0;
+        XO_TRACE("sfs: image deleted");
     }
+    XO_TRACE("sfs: create %dx%d", drawWidth, drawHeight);
     nvg_image = nvgCreateImageRGBA(brls::Application::getNVGContext(), drawWidth, drawHeight, mpvImageFlags,
                                    (const unsigned char *)pixels);
+    XO_TRACE("sfs: image created %d", nvg_image);
 
     sw_size[0] = drawWidth;
     sw_size[1] = drawHeight;
@@ -934,10 +973,53 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     // The picture is put on the screen in two steps: the frame is resized to
     // the place the picture takes, and then the texture is drawn.
     stage::Marker marker("video draw");
-    if (!(this->rect == area)) setFrameSize(area);
+    XO_TRACE("ui: draw enter %.0fx%.0f redraw=%d", area.getWidth(), area.getHeight(), (int)this->redraw);
+    if (!(this->rect == area)) {
+        XO_TRACE("ui: draw setFrameSize enter");
+        setFrameSize(area);
+        XO_TRACE("ui: draw setFrameSize done");
+    }
 
 #ifdef MPV_SW_RENDER
-    if (!pixels) return;
+    if (!pixels) {
+        XO_TRACE("ui: draw exit no pixels");
+        return;
+    }
+
+#ifdef PS5
+    XO_TRACE("ui: draw update call enter");
+    uint64_t updateFlags = mpvRenderContextUpdate(mpv_context);
+    XO_TRACE("ui: draw update call done flags=0x%llx", (unsigned long long)updateFlags);
+    static double renderTotalMs = 0;
+    static int renderCount = 0;
+    if (updateFlags & MPV_RENDER_UPDATE_FRAME) {
+        XO_TRACE("ui: draw render enter");
+        double rStart = brls::getCPUTimeUsec() / 1000.0;
+        int r_err = mpvRenderContextRender(mpv_context, mpv_params);
+        double rCost = (brls::getCPUTimeUsec() / 1000.0) - rStart;
+        renderTotalMs += rCost;
+        renderCount++;
+        XO_TRACE("ui: draw render done err=%d cost=%.1fms", r_err, rCost);
+        mpvRenderContextReportSwap(mpv_context);
+        XO_TRACE("ui: draw swap done");
+        this->redraw = true;
+    }
+    {
+        static long drawCalls = 0, drawRedraws = 0;
+        static double drawAt = 0;
+        drawCalls += 1;
+        if (this->redraw) drawRedraws += 1;
+        double drawNow = brls::getCPUTimeUsec() / 1000.0;
+        if (drawNow - drawAt > 1000.0) {
+            drawAt = drawNow;
+            double avgRenderMs = renderCount > 0 ? (renderTotalMs / renderCount) : 0;
+            brls::Logger::info("video draw: calls={} redraw={} avgRender={:.1f}ms totalRender={:.1f}ms", 
+                               drawCalls, drawRedraws, avgRenderMs, renderTotalMs);
+            renderTotalMs = 0;
+            renderCount = 0;
+        }
+    }
+#endif
 
     auto *vg = brls::Application::getNVGContext();
     if (this->redraw) {
@@ -945,7 +1027,9 @@ void MPVCore::draw(brls::Rect area, float alpha) {
         static double nvgUpdateMs = 0;
         static double nvgUpdateAt = 0;
         double start = brls::getCPUTimeUsec() / 1000.0;
+        XO_TRACE("ui: image upload enter %dx%d", sw_size[0], sw_size[1]);
         nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
+        XO_TRACE("ui: image upload done");
         nvgUpdateMs += brls::getCPUTimeUsec() / 1000.0 - start;
         double now = brls::getCPUTimeUsec() / 1000.0;
         if (now - nvgUpdateAt > 1000.0) {
@@ -956,6 +1040,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     }
 
     // draw black background
+    XO_TRACE("ui: draw bg enter");
     nvgBeginPath(vg);
     NVGcolor bg{};
     bg.a = alpha;
@@ -964,10 +1049,12 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     nvgFill(vg);
 
     // draw video
+    XO_TRACE("ui: draw video pattern enter");
     nvgBeginPath(vg);
     nvgRect(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
     nvgFillPaint(vg, nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha));
     nvgFill(vg);
+    XO_TRACE("ui: video painted");
 #elif defined(BOREALIS_USE_GXM)
     auto *vg = brls::Application::getNVGContext();
 
@@ -1134,6 +1221,20 @@ void MPVCore::eventMainLoop() {
 
                 mpvCoreEvent.fire(MpvEventEnum::LOADING_START);
                 break;
+#ifdef PS5
+            case MPV_EVENT_VIDEO_RECONFIG:
+                // event 17: 视频链重新配置（分辨率、像素格式变化）
+                brls::Logger::info("========> MPV_EVENT_VIDEO_RECONFIG");
+                break;
+            case MPV_EVENT_AUDIO_RECONFIG:
+                // event 18: 音频链重新配置
+                brls::Logger::info("========> MPV_EVENT_AUDIO_RECONFIG");
+                break;
+            case MPV_EVENT_SEEK:
+                // event 20: 开始跳转
+                brls::Logger::info("========> MPV_EVENT_SEEK");
+                break;
+#endif
             case MPV_EVENT_PLAYBACK_RESTART:
                 // event 21: 开始播放文件（一般是播放或调整进度结束之后触发）
                 brls::Logger::info("========> MPV_EVENT_PLAYBACK_RESTART");
@@ -1516,7 +1617,7 @@ void MPVCore::setHardwareDecode(bool value) {
     ProgramConfig::instance().setSettingItem(SettingItem::PLAYER_HWDEC, value);
     MPVCore::HARDWARE_DEC = value;
 #if defined(PS5)
-    std::string vd = value ? PLAYER_HWDEC_METHOD : "auto";
+    std::string vd = value ? PLAYER_HWDEC_METHOD : "!h264_ps5,!hevc_ps5,auto";
     command_async("set", "vd", vd);
     brls::Logger::info("MPV video decoder: {}", vd);
 #else
