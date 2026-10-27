@@ -270,6 +270,26 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
 - **MPV Software Rendering (`MPV_SW_RENDER`)**: Under `BOREALIS_USE_VULKAN`, MPV renders to a CPU buffer (`pixels`) aligned to 64 bytes via `posix_memalign(..., 64, size + 64)`. Rendering surface is capped at 1080p to prevent 4K memory bandwidth bottlenecks; GPU shaders scale it to 4K output without CPU cost.
 - **Frame Boundaries**: `nvgUpdateImage` must only be invoked within the rendering loop (`draw()`), never out-of-band in `reset()` or `setUrl()`.
 
+#### PS5 Physical HDR10 & Dolby Vision / HLG Pipeline Notes
+- **Physical HDR10 Output Switching**:
+  - `ps5_vulkan_trampoline.c` intercepts `sceVideoOutOpen` via `--wrap=sceVideoOutOpen` to capture the active `videoOutHandle`.
+  - `ps5_hdr_helper.cpp` dynamically toggles display output color attributes in-place using `sceVideoOutSubmitChangeBufferAttribute2`:
+    - HDR Active: `0x8100070400000000` (`Bgr10A2Bt2100Pq`, 10-bit BT.2020 PQ).
+    - SDR Fallback: `0x8000000000000000` (`Bgr8A8Unorm` / standard SDR).
+  - In `fill_base.frag` (`hdrOutput == 1`):
+    - Final 10-bit video PQ is packed into 32-bit RGBA output: `u32 = b10 | (g10 << 10) | (r10 << 20) | (a2 << 30)`.
+    - UI and text elements are mapped to 203 Nits (Graphics White) BT.2020 PQ per **ITU-R BT.2408** to prevent UI glare/washout.
+- **Dolby Vision Profile 8.4 vs Profile 5 Distinction**:
+  - **Profile 8.4 (iPhone & mobile user uploads)**:
+    - Base layer is standard **HLG (ARIB-STD-B67) BT.2020 YUV** (stream `dv_profile=8`, `compatibility id: 4`).
+    - Flagged in `mpv_core.cpp` via `isHlg` (`gamma == "arib-std-b67"` / `gamma == "hlg"`), mapping to `videoPaint.radius = 3.0f` and `texType == 6`.
+    - Shader applies **ITU-R BT.2100 HLG EOTF** (`hlg_to_nits` -> 1000 Nits nominal peak -> `nits_to_pq_vec3`). Must **never** feed raw HLG directly into PQ (causes severe oversaturation / blowout) or ICtCp reshaping (causes green tint).
+  - **Profile 5 (Official streaming & cinema)**:
+    - Base layer is proprietary **IPT-PQ / ICtCp** (`dv_profile=5`, Full Range 0~255).
+    - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`.
+    - `swscale` default Limited Range expansion is reversed (`Y_full = Y_sws * (219/255) + 16/255`, `Ct/Cp = C_sws * (224/255)`).
+    - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`. Dark-region chroma damping and out-of-gamut protection are enforced to eliminate non-linear green flare.
+
 
 ### Useful CMake flags
 | Flag | Purpose |
