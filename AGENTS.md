@@ -279,6 +279,12 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
   - In `fill_base.frag` (`hdrOutput == 1`):
     - Final 10-bit video PQ is packed into 32-bit RGBA output: `u32 = b10 | (g10 << 10) | (r10 << 20) | (a2 << 30)`.
     - UI and text elements are mapped to 203 Nits (Graphics White) BT.2020 PQ per **ITU-R BT.2408** to prevent UI glare/washout.
+  - Flag plumbing: `mpv_core.cpp` derives `wantHdrOutput` from the video params and calls `PS5HDR::setHdrOutput()` (display attribute, above) plus `nvgSetHdrOutput(vg, 0|1)`; `nanovg_vk.h` reads it back with `vknvg_get_hdr_output()` into `frag->hdrOutput`.
+- **Video texture types (`nvgImagePattern` → `texType`)**: the value is carried in `NVGpaint.radius` and decoded in `nanovg_vk.h`:
+  - `radius = 3.0f` → `texType = 6`: HLG (BT.2100 ARIB-STD-B67) → PQ / SDR.
+  - `radius = 2.0f` → `texType = 5`: Dolby Vision Profile 5 (ICtCp reshaping).
+  - `radius = 1.0f` → `texType = 4`: generic HDR10 PQ (BT.2020 → BT.709 tone mapping).
+  - `NVG_IMAGE_DOVI_PROFILE5` / `NVG_IMAGE_HDR_TONEMAP` image flags select the same paths when the radius is left at 0.
 - **Dolby Vision Profile 8.4 vs Profile 5 Distinction**:
   - **Profile 8.4 (iPhone & mobile user uploads)**:
     - Base layer is standard **HLG (ARIB-STD-B67) BT.2020 YUV** (stream `dv_profile=8`, `compatibility id: 4`).
@@ -286,9 +292,10 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
     - Shader applies **ITU-R BT.2100 HLG EOTF** (`hlg_to_nits` -> 1000 Nits nominal peak -> `nits_to_pq_vec3`). Must **never** feed raw HLG directly into PQ (causes severe oversaturation / blowout) or ICtCp reshaping (causes green tint).
   - **Profile 5 (Official streaming & cinema)**:
     - Base layer is proprietary **IPT-PQ / ICtCp** (`dv_profile=5`, Full Range 0~255).
-    - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`.
+    - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`. Note: `dv_profile` itself is **not** read — the check is heuristic (see below) because the container metadata is not exposed by every Bilibili stream.
     - `swscale` default Limited Range expansion is reversed (`Y_full = Y_sws * (219/255) + 16/255`, `Ct/Cp = C_sws * (224/255)`).
     - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`. Dark-region chroma damping and out-of-gamut protection are enforced to eliminate non-linear green flare.
+  - **Heuristic detection (do not replace with `dv_profile` alone)**: `isDoviProfile5` = `colormatrix` contains `ipt`, or `codec` contains `dv`, or `pixelFormat` contains `dovi`, or `currentQuality == 126`; `isHlg` wins over it (Profile 8.4 shares the Profile 5 codec path but is plain HLG). `isHdr` additionally accepts `p010`, any 10-bit pixel format, `gamma == pq/smpte2084` and `primaries == bt.2020`.
 
 
 ### Useful CMake flags
