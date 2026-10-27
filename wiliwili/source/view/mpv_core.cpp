@@ -14,6 +14,7 @@
 #include "utils/stage.hpp"
 #include "utils/number_helper.hpp"
 #include "utils/crash_helper.hpp"
+#include "utils/ps5_hdr_helper.hpp"
 #include "view/mpv_core.hpp"
 
 #define XO_TRACE(...)
@@ -1066,6 +1067,14 @@ void MPVCore::draw(brls::Rect area, float alpha) {
                   this->videoInfo.gamma == "smpte2084" ||
                   this->videoInfo.gamma == "arib-std-b67" ||
                   this->videoInfo.primaries == "bt.2020");
+#if defined(PS5)
+    bool wantHdrOutput = (isDoviProfile5 || isHdr) && !this->isStopped();
+    if (wantHdrOutput != PS5HDR::isHdrOutputActive()) {
+        PS5HDR::setHdrOutput(wantHdrOutput);
+        nvgSetHdrOutput(vg, wantHdrOutput ? 1 : 0);
+    }
+#endif
+
     if (isDoviProfile5) {
         videoPaint.radius = 2.0f; // 触发 GPU 片段着色器 Dolby Vision Profile 5 ICtCp 逆重塑与色调映射
     } else if (isHdr) {
@@ -1536,6 +1545,13 @@ void MPVCore::eventMainLoop() {
 
 void MPVCore::reset() {
     brls::Logger::debug("MPVCore::reset");
+#if defined(PS5)
+    if (PS5HDR::isHdrOutputActive()) {
+        PS5HDR::setHdrOutput(false);
+        auto *vg = brls::Application::getNVGContext();
+        if (vg) nvgSetHdrOutput(vg, 0);
+    }
+#endif
     mpvCoreEvent.fire(MpvEventEnum::RESET);
     this->percent_pos    = 0;
     this->duration       = 0;  // second
@@ -1600,7 +1616,16 @@ void MPVCore::resume() { command_async("set", "pause", "no"); }
 
 void MPVCore::pause() { command_async("set", "pause", "yes"); }
 
-void MPVCore::stop() { command_async("stop"); }
+void MPVCore::stop() {
+#if defined(PS5)
+    if (PS5HDR::isHdrOutputActive()) {
+        PS5HDR::setHdrOutput(false);
+        auto *vg = brls::Application::getNVGContext();
+        if (vg) nvgSetHdrOutput(vg, 0);
+    }
+#endif
+    command_async("stop");
+}
 
 void MPVCore::seek(int64_t p) { command_async("seek", p, "absolute"); }
 

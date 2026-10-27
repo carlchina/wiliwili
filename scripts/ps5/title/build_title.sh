@@ -451,7 +451,7 @@ link_image() {
         radv_script=(-T "$work_dir/radv_stubs.ld")
         radv_objects=("$work_dir/obj/ps5_vulkan_trampoline.o")
         radv_link_inputs=(--whole-archive "$radv_archive" --no-whole-archive "$platform_archive")
-        radv_link_flags=(--wrap=pthread_create --wrap=pthread_join --wrap=pthread_detach --wrap=fclose --wrap=fflush)
+        radv_link_flags=(--wrap=pthread_create --wrap=pthread_join --wrap=pthread_detach --wrap=fclose --wrap=fflush --wrap=sceVideoOutOpen)
         for name in qsort_r mkstemps openlog popen pclose open_memstream __xuname __assert \
                 __memset_chk regcomp regexec regfree regerror localtime_r newlocale freelocale \
                 strtod_l strtof_l dladdr utimensat localeconv_l strtoll_l strtoull_l strtold_l \

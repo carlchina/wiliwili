@@ -21,6 +21,22 @@ int __cpu_indicator_init(void) {
     return 0;
 }
 
+#include <stdint.h>
+static int32_t s_videoout_handle = -1;
+extern int __real_sceVideoOutOpen(int32_t user, int32_t bus, int32_t index, const void *parameter);
+
+int __wrap_sceVideoOutOpen(int32_t user, int32_t bus, int32_t index, const void *parameter) {
+    int handle = __real_sceVideoOutOpen(user, bus, index, parameter);
+    if (handle >= 0) {
+        s_videoout_handle = handle;
+    }
+    return handle;
+}
+
+int32_t ps5_get_videoout_handle(void) {
+    return s_videoout_handle;
+}
+
 extern PFN_vkVoidFunction vk_icdGetInstanceProcAddr(VkInstance instance, const char* pName);
 
 static VkInstance s_vkInstance = VK_NULL_HANDLE;

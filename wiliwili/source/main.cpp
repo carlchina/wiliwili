@@ -15,6 +15,7 @@
 #include "utils/stage.hpp"
 #include "utils/activity_helper.hpp"
 #include "utils/ps5_decoder.hpp"
+#include "utils/ps5_hdr_helper.hpp"
 #include "view/mpv_core.hpp"
 
 #ifdef IOS
@@ -173,15 +174,7 @@ int main(int argc, char* argv[]) {
         brls::Logger::info("mainLoop done");
 
 #ifdef PS5
-        // Nothing is released here: the console takes the whole process down
-        // with the title, and the cleanup the other platforms do is not free.
-        // It joins the network threads and releases the network library, and
-        // both work with threads the application started; once the main loop
-        // has returned there is nothing left to serve them, so the call can
-        // wait for ever. The title then stayed alive behind a black screen, and
-        // launching it again only brought back that same window. The log of
-        // such an exit ends at "mainLoop done", and the watch reports "the
-        // interface stopped in: run loop" ten seconds later.
+        PS5HDR::cleanup();
         brls::Logger::info("leaving the title");
         fflush(nullptr);
         wiliwili_mark("leaving title");
