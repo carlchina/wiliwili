@@ -293,8 +293,8 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
   - **Profile 5 (Official streaming & cinema)**:
     - Base layer is proprietary **IPT-PQ / ICtCp** (`dv_profile=5`, Full Range 0~255).
     - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`. Note: `dv_profile` itself is **not** read — the check is heuristic (see below) because the container metadata is not exposed by every Bilibili stream.
-    - `swscale` default Limited Range expansion is reversed (`Y_full = Y_sws * (219/255) + 16/255`, `Ct/Cp = C_sws * (224/255)`).
-    - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`. Dark-region chroma damping and out-of-gamut protection are enforced to eliminate non-linear green flare.
+    - `MPVCore::setDolbyVisionFormat()` 在检测到 Profile 5 时给 mpv 追加上 `vf=@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709`（离开/停止时移除）：swscale 两端都是 full range 时只做取值搬运，并按 bt.709 输出伪 RGB，着色器用同一组 bt.709 系数即可精确取回 `I / Ct / Cp`。**不要**再在着色器里反推 limited→full 的拉伸，也不要加暗部色度衰减之类的补偿。
+    - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`; out-of-gamut negatives are clipped (lifting them would turn pure black into gray).
   - **Heuristic detection (do not replace with `dv_profile` alone)**: `isDoviProfile5` = `colormatrix` contains `ipt`, or `codec` contains `dv`, or `pixelFormat` contains `dovi`, or `currentQuality == 126`; `isHlg` wins over it (Profile 8.4 shares the Profile 5 codec path but is plain HLG). `isHdr` additionally accepts `p010`, any 10-bit pixel format, `gamma == pq/smpte2084` and `primaries == bt.2020`.
 
 

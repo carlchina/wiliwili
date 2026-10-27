@@ -181,6 +181,7 @@ public:
         std::string gamma;
         std::string primaries;
         std::string colormatrix;
+        std::string colorlevels;
         int64_t width        = 0;
         int64_t height       = 0;
         double fps           = 0;
@@ -346,6 +347,13 @@ public:
 
     void clearShader(bool showHint = true);
 
+    /**
+     * Dolby Vision Profile 5 的码流是 full range 的 IPT，容器里却常常标成 limited，
+     * mpv 会把它当成 limited 展开一遍。这里用 format 滤镜把输入参数声明成
+     * full range + bt.709，让 swscale 只做取值搬运，着色器据此精确还原 I/Ct/Cp。
+     */
+    void setDolbyVisionFormat(bool enable);
+
     /// Send command to mpv
     template <typename... Args>
     void command_async(Args &&...args) {
@@ -450,6 +458,8 @@ private:
     mpv_handle *mpv                 = nullptr;
     mpv_render_context *mpv_context = nullptr;
     brls::Rect rect                 = {0, 0, 1920, 1080};
+    /// 当前是否已经给 mpv 挂上了 Dolby Vision Profile 5 的 format 滤镜
+    bool doviFormatActive           = false;
 #ifdef MPV_SW_RENDER
     const int PIXCEL_SIZE          = 4;
     int nvg_image                  = 0;
