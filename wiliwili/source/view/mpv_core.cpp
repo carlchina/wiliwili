@@ -17,8 +17,6 @@
 #include "utils/ps5_hdr_helper.hpp"
 #include "view/mpv_core.hpp"
 
-#define XO_TRACE(...)
-
 #ifdef MPV_BUNDLE_DLL
 mpvSetOptionStringFunc mpvSetOptionString;
 mpvObservePropertyFunc mpvObserveProperty;
@@ -227,9 +225,7 @@ void MPVCore::on_update(void *self) {
     }
     brls::sync([]() {
         update_in_flight = false;
-        XO_TRACE("ui: update task");
         uint64_t flags = mpvRenderContextUpdate(MPVCore::instance().getContext());
-        XO_TRACE("ui: update flags=%llu", (unsigned long long)flags);
 #ifdef PS5
         if (flags & MPV_RENDER_UPDATE_FRAME) {
             updateFrame += 1;
@@ -258,11 +254,8 @@ void MPVCore::on_update(void *self) {
             static double swRenderMs = 0;
             static double swRenderAt = 0;
             double start = brls::getCPUTimeUsec() / 1000.0;
-            XO_TRACE("ui: sw render enter");
             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
-            XO_TRACE("ui: sw render done");
             mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
-            XO_TRACE("ui: sw swap done");
             swRenderMs += brls::getCPUTimeUsec() / 1000.0 - start;
             double now = brls::getCPUTimeUsec() / 1000.0;
             if (now - swRenderAt > 1000.0) {
@@ -893,12 +886,9 @@ void MPVCore::setFrameSize(brls::Rect r) {
     if (nvg_image) {
         nvgDeleteImage(brls::Application::getNVGContext(), nvg_image);
         nvg_image = 0;
-        XO_TRACE("sfs: image deleted");
     }
-    XO_TRACE("sfs: create %dx%d", drawWidth, drawHeight);
     nvg_image = nvgCreateImageRGBA(brls::Application::getNVGContext(), drawWidth, drawHeight, mpvImageFlags,
                                    (const unsigned char *)pixels);
-    XO_TRACE("sfs: image created %d", nvg_image);
 
     sw_size[0] = drawWidth;
     sw_size[1] = drawHeight;
@@ -977,35 +967,26 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     // The picture is put on the screen in two steps: the frame is resized to
     // the place the picture takes, and then the texture is drawn.
     stage::Marker marker("video draw");
-    XO_TRACE("ui: draw enter %.0fx%.0f redraw=%d", area.getWidth(), area.getHeight(), (int)this->redraw);
     if (!(this->rect == area)) {
-        XO_TRACE("ui: draw setFrameSize enter");
         setFrameSize(area);
-        XO_TRACE("ui: draw setFrameSize done");
     }
 
 #ifdef MPV_SW_RENDER
     if (!pixels) {
-        XO_TRACE("ui: draw exit no pixels");
         return;
     }
 
 #ifdef PS5
-    XO_TRACE("ui: draw update call enter");
     uint64_t updateFlags = mpvRenderContextUpdate(mpv_context);
-    XO_TRACE("ui: draw update call done flags=0x%llx", (unsigned long long)updateFlags);
     static double renderTotalMs = 0;
     static int renderCount = 0;
     if (updateFlags & MPV_RENDER_UPDATE_FRAME) {
-        XO_TRACE("ui: draw render enter");
         double rStart = brls::getCPUTimeUsec() / 1000.0;
-        int r_err = mpvRenderContextRender(mpv_context, mpv_params);
+        mpvRenderContextRender(mpv_context, mpv_params);
         double rCost = (brls::getCPUTimeUsec() / 1000.0) - rStart;
         renderTotalMs += rCost;
         renderCount++;
-        XO_TRACE("ui: draw render done err=%d cost=%.1fms", r_err, rCost);
         mpvRenderContextReportSwap(mpv_context);
-        XO_TRACE("ui: draw swap done");
         this->redraw = true;
     }
     {
@@ -1031,9 +1012,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
         static double nvgUpdateMs = 0;
         static double nvgUpdateAt = 0;
         double start = brls::getCPUTimeUsec() / 1000.0;
-        XO_TRACE("ui: image upload enter %dx%d", sw_size[0], sw_size[1]);
         nvgUpdateImage(vg, nvg_image, (const unsigned char *)pixels);
-        XO_TRACE("ui: image upload done");
         nvgUpdateMs += brls::getCPUTimeUsec() / 1000.0 - start;
         double now = brls::getCPUTimeUsec() / 1000.0;
         if (now - nvgUpdateAt > 1000.0) {
@@ -1044,7 +1023,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     }
 
     // draw black background
-    XO_TRACE("ui: draw bg enter");
     nvgBeginPath(vg);
     NVGcolor bg{};
     bg.a = alpha;
@@ -1053,7 +1031,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     nvgFill(vg);
 
     // draw video
-    XO_TRACE("ui: draw video pattern enter");
     nvgBeginPath(vg);
     nvgRect(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
     NVGpaint videoPaint = nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha);
@@ -1085,7 +1062,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     }
     nvgFillPaint(vg, videoPaint);
     nvgFill(vg);
-    XO_TRACE("ui: video painted");
 #elif defined(BOREALIS_USE_GXM)
     auto *vg = brls::Application::getNVGContext();
 
