@@ -553,6 +553,9 @@ void MPVCore::init() {
     check_error(mpvObserveProperty(mpv, 27, "video-bitrate", MPV_FORMAT_INT64));
     check_error(mpvObserveProperty(mpv, 28, "frame-drop-count", MPV_FORMAT_INT64));
     check_error(mpvObserveProperty(mpv, 29, "avsync", MPV_FORMAT_DOUBLE));
+    check_error(mpvObserveProperty(mpv, 30, "video-params/gamma", MPV_FORMAT_STRING));
+    check_error(mpvObserveProperty(mpv, 31, "video-params/primaries", MPV_FORMAT_STRING));
+    check_error(mpvObserveProperty(mpv, 32, "video-params/colormatrix", MPV_FORMAT_STRING));
 
     // init renderer params
 #ifdef MPV_SW_RENDER
@@ -1052,7 +1055,17 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     XO_TRACE("ui: draw video pattern enter");
     nvgBeginPath(vg);
     nvgRect(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
-    nvgFillPaint(vg, nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha));
+    NVGpaint videoPaint = nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha);
+    bool isHdr = (this->videoInfo.pixelFormat == "p010" ||
+                  this->videoInfo.pixelFormat.find("10") != std::string::npos ||
+                  this->videoInfo.gamma == "pq" ||
+                  this->videoInfo.gamma == "smpte2084" ||
+                  this->videoInfo.gamma == "arib-std-b67" ||
+                  this->videoInfo.primaries == "bt.2020");
+    if (isHdr) {
+        videoPaint.radius = 1.0f; // 触发 GPU 片段着色器 HDR PQ BT.2020 -> SDR BT.709 电影级色调映射
+    }
+    nvgFillPaint(vg, videoPaint);
     nvgFill(vg);
     XO_TRACE("ui: video painted");
 #elif defined(BOREALIS_USE_GXM)
@@ -1484,6 +1497,24 @@ void MPVCore::eventMainLoop() {
                         if (data) {
                             std::lock_guard<std::mutex> lock(videoInfoMutex);
                             videoInfo.avsync = *(double *)data;
+                        }
+                        break;
+                    case 30:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.gamma = *(char **)data ? *(char **)data : "";
+                        }
+                        break;
+                    case 31:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.primaries = *(char **)data ? *(char **)data : "";
+                        }
+                        break;
+                    case 32:
+                        if (data) {
+                            std::lock_guard<std::mutex> lock(videoInfoMutex);
+                            videoInfo.colormatrix = *(char **)data ? *(char **)data : "";
                         }
                         break;
                     default:

@@ -178,6 +178,9 @@ public:
         std::string codec;
         std::string pixelFormat;
         std::string hwdec;
+        std::string gamma;
+        std::string primaries;
+        std::string colormatrix;
         int64_t width        = 0;
         int64_t height       = 0;
         double fps           = 0;
