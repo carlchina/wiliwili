@@ -1056,13 +1056,19 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     nvgBeginPath(vg);
     nvgRect(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
     NVGpaint videoPaint = nvgImagePattern(vg, rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight(), 0, nvg_image, alpha);
+    bool isDoviProfile5 = (this->videoInfo.colormatrix.find("ipt") != std::string::npos ||
+                           this->videoInfo.codec.find("dv") != std::string::npos ||
+                           this->videoInfo.pixelFormat.find("dovi") != std::string::npos ||
+                           (this->currentQuality == 126 && this->videoInfo.gamma != "arib-std-b67" && this->videoInfo.gamma != "hlg"));
     bool isHdr = (this->videoInfo.pixelFormat == "p010" ||
                   this->videoInfo.pixelFormat.find("10") != std::string::npos ||
                   this->videoInfo.gamma == "pq" ||
                   this->videoInfo.gamma == "smpte2084" ||
                   this->videoInfo.gamma == "arib-std-b67" ||
                   this->videoInfo.primaries == "bt.2020");
-    if (isHdr) {
+    if (isDoviProfile5) {
+        videoPaint.radius = 2.0f; // 触发 GPU 片段着色器 Dolby Vision Profile 5 ICtCp 逆重塑与色调映射
+    } else if (isHdr) {
         videoPaint.radius = 1.0f; // 触发 GPU 片段着色器 HDR PQ BT.2020 -> SDR BT.709 电影级色调映射
     }
     nvgFillPaint(vg, videoPaint);
@@ -1543,6 +1549,7 @@ void MPVCore::reset() {
         std::lock_guard<std::mutex> lock(videoInfoMutex);
         videoInfo = {};
     }
+    this->currentQuality = 0;
 
 #ifdef MPV_SW_RENDER
     if (pixels && sw_size[0] > 0 && sw_size[1] > 0) {

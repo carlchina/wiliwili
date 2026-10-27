@@ -380,6 +380,9 @@ public:
     // 视频参数（由 mpv 的属性通知更新，见 getVideoInfo）
     VideoInfo videoInfo;
     std::mutex videoInfoMutex;
+    int currentQuality = 0;
+    void setCurrentQuality(int q) { currentQuality = q; }
+    int getCurrentQuality() const { return currentQuality; }
     std::string currentShaderProfile;                      // 当前着色器脚本名
     std::string currentShader;                             // 当前着色器脚本
     std::vector<std::vector<std::string>> currentSetting;  // 当前着色器脚本附加的mpv配置
