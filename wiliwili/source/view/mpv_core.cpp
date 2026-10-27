@@ -1051,8 +1051,10 @@ void MPVCore::draw(brls::Rect area, float alpha) {
 #if defined(PS5)
     bool wantHdrOutput = (isDoviProfile5 || isHdr) && !this->isStopped();
     if (wantHdrOutput != PS5HDR::isHdrOutputActive()) {
-        PS5HDR::setHdrOutput(wantHdrOutput);
-        nvgSetHdrOutput(vg, wantHdrOutput ? 1 : 0);
+        // 只有真正切到 10bit PQ 扫描输出之后，着色器才能按 PQ 打包：帧缓冲本身
+        // 还是 8bit，显示端没切的话按 PQ 写进去，整屏（连界面）都会花掉。
+        bool switched = PS5HDR::setHdrOutput(wantHdrOutput);
+        nvgSetHdrOutput(vg, (wantHdrOutput && switched) ? 1 : 0);
     }
 #endif
 
@@ -1537,8 +1539,8 @@ void MPVCore::reset() {
     brls::Logger::debug("MPVCore::reset");
     setDolbyVisionFormat(false);
 #if defined(PS5)
-    if (PS5HDR::isHdrOutputActive()) {
-        PS5HDR::setHdrOutput(false);
+    PS5HDR::endPlayback();
+    {
         auto *vg = brls::Application::getNVGContext();
         if (vg) nvgSetHdrOutput(vg, 0);
     }
@@ -1610,8 +1612,8 @@ void MPVCore::pause() { command_async("set", "pause", "yes"); }
 void MPVCore::stop() {
     setDolbyVisionFormat(false);
 #if defined(PS5)
-    if (PS5HDR::isHdrOutputActive()) {
-        PS5HDR::setHdrOutput(false);
+    PS5HDR::endPlayback();
+    {
         auto *vg = brls::Application::getNVGContext();
         if (vg) nvgSetHdrOutput(vg, 0);
     }

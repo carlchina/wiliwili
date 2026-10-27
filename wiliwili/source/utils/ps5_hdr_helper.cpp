@@ -25,14 +25,25 @@ int32_t sceVideoOutGetOutputStatus(int32_t handle, struct PS5OutputStatus *statu
 #define PS5_VIDEO_FORMAT_SDR UINT64_C(0x8000000000000000)
 #define PS5_VIDEO_FORMAT_HDR UINT64_C(0x8100070400000000)
 
-static bool s_hdrActive = false;
+// 0: 还没切换过, 1: 已切到 HDR10, 2: 已切到 SDR, 3: HDR 切换失败（本次播放不再重试）
+//
+// 切换失败时不能每帧重试：mpv 每帧都会问状态，失败一次就会刷两条日志，
+// 几秒钟就能把 8MB 的日志写满并翻转。
+static int s_state = 0;
 
 void PS5HDR::init() {
-    s_hdrActive = false;
+    s_state = 0;
 }
 
 bool PS5HDR::setHdrOutput(bool enable) {
-    if (enable == s_hdrActive) {
+    if (enable && s_state == 1) {
+        return true;
+    }
+    if (enable && s_state == 3) {
+        return false;
+    }
+    if (!enable && (s_state == 0 || s_state == 2)) {
+        s_state = 2;
         return true;
     }
 
@@ -57,11 +68,20 @@ bool PS5HDR::setHdrOutput(bool enable) {
     }
 
     if (rc != 0) {
-        brls::Logger::error("PS5HDR: SubmitChangeBufferAttribute2 failed rc=0x{:08x}", (uint32_t)rc);
+        brls::Logger::error("PS5HDR: SubmitChangeBufferAttribute2 failed rc=0x{:08x} (handle={})",
+                            (uint32_t)rc, handle);
+        if (enable) {
+            // 显示端没有切到 10bit PQ，但帧缓冲还是 8bit：此时若继续按 PQ 打包，
+            // 整屏（连界面一起）都会变成黄紫色。降级到 SDR 色调映射，并把原因留在日志里。
+            brls::Logger::error("PS5HDR: staying on SDR output, HDR is tone mapped in the shader");
+            s_state = 3;
+        } else {
+            s_state = 2;
+        }
         return false;
     }
 
-    s_hdrActive = enable;
+    s_state = enable ? 1 : 2;
     brls::Logger::info("PS5HDR: scanout changed successfully, now {}", enable ? "HDR10" : "SDR");
 
     PS5OutputStatus status{};
@@ -74,11 +94,20 @@ bool PS5HDR::setHdrOutput(bool enable) {
 }
 
 bool PS5HDR::isHdrOutputActive() {
-    return s_hdrActive;
+    return s_state == 1;
+}
+
+void PS5HDR::endPlayback() {
+    if (s_state == 1) {
+        setHdrOutput(false);
+    } else {
+        // 没切过 HDR（或切换失败过）：扫描输出不用动，只清掉状态让下一条视频重新尝试
+        s_state = 0;
+    }
 }
 
 void PS5HDR::cleanup() {
-    if (s_hdrActive) {
+    if (s_state == 1) {
         setHdrOutput(false);
     }
 }
@@ -86,5 +115,6 @@ void PS5HDR::cleanup() {
 void PS5HDR::init() {}
 bool PS5HDR::setHdrOutput(bool) { return false; }
 bool PS5HDR::isHdrOutputActive() { return false; }
+void PS5HDR::endPlayback() {}
 void PS5HDR::cleanup() {}
 #endif
