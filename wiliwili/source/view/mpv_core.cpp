@@ -14,7 +14,6 @@
 #include "utils/stage.hpp"
 #include "utils/number_helper.hpp"
 #include "utils/crash_helper.hpp"
-#include "utils/ps5_hdr_helper.hpp"
 #include "view/mpv_core.hpp"
 
 #ifdef MPV_BUNDLE_DLL
@@ -1045,16 +1044,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
                   this->videoInfo.gamma == "smpte2084" ||
                   isHlg ||
                   this->videoInfo.primaries == "bt.2020");
-#if defined(PS5)
-    bool wantHdrOutput = MPVCore::HDR_OUTPUT && (isDoviProfile5 || isHdr) && !this->isStopped();
-    if (wantHdrOutput != PS5HDR::isHdrOutputActive()) {
-        // 只有真正切到 10bit PQ 扫描输出之后，着色器才能按 PQ 打包：帧缓冲本身
-        // 还是 8bit，显示端没切的话按 PQ 写进去，整屏（连界面）都会花掉。
-        bool switched = PS5HDR::setHdrOutput(wantHdrOutput);
-        nvgSetHdrOutput(vg, (wantHdrOutput && switched) ? 1 : 0);
-    }
-#endif
-
     if (isHlg) {
         videoPaint.radius = 3.0f; // 触发 GPU 片段着色器 HLG BT.2100 -> PQ / SDR 电影级转换
     } else if (isDoviProfile5) {
@@ -1526,13 +1515,6 @@ void MPVCore::eventMainLoop() {
 
 void MPVCore::reset() {
     brls::Logger::debug("MPVCore::reset");
-#if defined(PS5)
-    PS5HDR::endPlayback();
-    {
-        auto *vg = brls::Application::getNVGContext();
-        if (vg) nvgSetHdrOutput(vg, 0);
-    }
-#endif
     mpvCoreEvent.fire(MpvEventEnum::RESET);
     this->percent_pos    = 0;
     this->duration       = 0;  // second
@@ -1598,13 +1580,6 @@ void MPVCore::resume() { command_async("set", "pause", "no"); }
 void MPVCore::pause() { command_async("set", "pause", "yes"); }
 
 void MPVCore::stop() {
-#if defined(PS5)
-    PS5HDR::endPlayback();
-    {
-        auto *vg = brls::Application::getNVGContext();
-        if (vg) nvgSetHdrOutput(vg, 0);
-    }
-#endif
     command_async("stop");
 }
 

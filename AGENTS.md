@@ -271,15 +271,14 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
 - **Frame Boundaries**: `nvgUpdateImage` must only be invoked within the rendering loop (`draw()`), never out-of-band in `reset()` or `setUrl()`.
 
 #### PS5 Physical HDR10 & Dolby Vision / HLG Pipeline Notes
-- **Physical HDR10 Output Switching**:
-  - `ps5_vulkan_trampoline.c` intercepts `sceVideoOutOpen` via `--wrap=sceVideoOutOpen` to capture the active `videoOutHandle`.
-  - `ps5_hdr_helper.cpp` dynamically toggles display output color attributes in-place using `sceVideoOutSubmitChangeBufferAttribute2`:
-    - HDR Active: `0x8100070400000000` (`Bgr10A2Bt2100Pq`, 10-bit BT.2020 PQ).
-    - SDR Fallback: `0x8000000000000000` (`Bgr8A8Unorm` / standard SDR).
-  - In `fill_base.frag` (`hdrOutput == 1`):
-    - Final 10-bit video PQ is packed into 32-bit RGBA output: `u32 = b10 | (g10 << 10) | (r10 << 20) | (a2 << 30)`.
-    - UI and text elements are mapped to 203 Nits (Graphics White) BT.2020 PQ per **ITU-R BT.2408** to prevent UI glare/washout.
-  - Flag plumbing: `mpv_core.cpp` derives `wantHdrOutput` from the video params and calls `PS5HDR::setHdrOutput()` (display attribute, above) plus `nvgSetHdrOutput(vg, 0|1)`; `nanovg_vk.h` reads it back with `vknvg_get_hdr_output()` into `frag->hdrOutput`.
+- **Physical HDR10 Output**:
+  - The swapchain decides, not a runtime switch. `MPVCore::HDR_OUTPUT` (config key `ps5_hdr_output`, default off) is copied into `brls::VulkanContext::HDR_SWAPCHAIN` in `main.cpp` before `brls::Application::init()`; the driver then asks for `brls::VulkanContext::HDR_SWAPCHAIN_FORMAT` = `VK_FORMAT_A2R10G10B10_UNORM_PACK32` and falls back to `B8G8R8A8_UNORM` when the surface or the console refuses it.
+  - **Channel order**: VideoOut's `Bgr10A2` scans **blue in the low ten bits**. In Vulkan that is `A2R10G10B10_UNORM_PACK32` (Mesa: `PIPE_FORMAT_B10G10R10A2`); `A2B10G10R10_UNORM_PACK32` puts red there and shows the whole screen with red and blue swapped (the theme's cyan focus ring turns gold, video turns purple). The `0x22000000` bits of the pixel format are the same RGB-vs-BGR choice: `0x8000000022000000` is Rgba8Srgb, `0x8000000000000000` is Bgra8Srgb. (Checked against sainsaji/EVO-PLAYER-PS5, `projects/evoplayer/media/src/evo_agc_runtime.c`.)
+  - Mesa's `videoout_register_locked()` (`wsi_common_videoout.c`) registers those framebuffers with `PS5_VIDEO_OUT_PIXEL_FORMAT_BGR10A2_BT2100_PQ` (`0x8100070400000000`), 8bit sets with `BGR8A8_SDR` (`0x8000000000000000`). A set is keyed by size **and** format. VideoOut only honors the format given **at registration**.
+  - `sceVideoOutSubmitChangeBufferAttribute2` retypes a registered set in place and is applied at the next flip (that is how EVO-PLAYER toggles HDR), but it cannot fix a set whose *pixels* are still 8bit, and `sceVideoOutGetOutputStatus` reports `dynamic_range=2` on a console set to always-HDR whether the retype happened or not — it is not a way to confirm a switch.
+  - **Never pack PQ into the 8bit frame buffer.** nanovg paints with premultiplied alpha blending (`ONE, ONE_MINUS_SRC_ALPHA`): any partially transparent draw (text anti-aliasing, rounded corners, danmaku, menu overlays) mixes packed bits with packed bits and the whole screen fills with garbage — that is the yellow UI and purple video this port used to show.
+  - In `fill_base.frag` (`hdrOutput == 1`) the shader writes PQ floats straight into the 10bit target (`outColor = vec4(finalPq, alpha)`); UI and text are mapped to 203 Nits (Graphics White) BT.2020 PQ per **ITU-R BT.2408**.
+  - Flag plumbing: `brls_nanovg_hdr_output` is a single global (declared in `nanovg.h`, defined in `nanovg.c`) because `nanovg_vk.h` is compiled into more than one translation unit — a `static` in that header gave every one of them its own copy, so the setter and the uniform filler disagreed. `VulkanContext::createSwapchainWithFormat()` sets it with `nvgSetHdrOutput(nullptr, 0|1)`, and `frag->hdrOutput` reads it back through `vknvg_get_hdr_output()`.
 - **Video texture types (`nvgImagePattern` → `texType`)**: the value is carried in `NVGpaint.radius` and decoded in `nanovg_vk.h`:
   - `radius = 3.0f` → `texType = 6`: HLG (BT.2100 ARIB-STD-B67) → PQ / SDR.
   - `radius = 2.0f` → `texType = 5`: Dolby Vision Profile 5 (ICtCp reshaping).
@@ -293,7 +292,8 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
   - **Profile 5 (Official streaming & cinema)**:
     - Base layer is proprietary **IPT-PQ / ICtCp** (`dv_profile=5`, Full Range 0~255).
     - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`. Note: `dv_profile` itself is **not** read — the check is heuristic (see below) because the container metadata is not exposed by every Bilibili stream.
-    - `MPVCore::setDolbyVisionFormat()` 在检测到 Profile 5 时给 mpv 追加上 `vf=@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709`（离开/停止时移除）：swscale 两端都是 full range 时只做取值搬运，并按 bt.709 输出伪 RGB，着色器用同一组 bt.709 系数即可精确取回 `I / Ct / Cp`。**不要**再在着色器里反推 limited→full 的拉伸，也不要加暗部色度衰减之类的补偿。
+    - The range compensation lives **in the shader** (`dolby_vision_profile5_to_nits()`): swscale treats the full-range IPT as limited and stretches luma by `(Y-16)*255/219` and chroma by ~14%, so the shader scales `Ct`/`Cp` back by `224/255`, damps chroma in the shadows (`smoothstep(0.02, 0.25, Y)`, 0.7→1.0) and lifts out-of-gamut negatives before clipping. This combination is what looks right on the console.
+    - A `vf=@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709` filter that declared the input as full range, so that the shader could take the untouched values, was tried and **made the picture worse** on the console: leave the filter chain alone.
     - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`; out-of-gamut negatives are clipped (lifting them would turn pure black into gray).
   - **Heuristic detection (do not replace with `dv_profile` alone)**: `isDoviProfile5` = `colormatrix` contains `ipt`, or `codec` contains `dv`, or `pixelFormat` contains `dovi`, or `currentQuality == 126`; `isHlg` wins over it (Profile 8.4 shares the Profile 5 codec path but is plain HLG). `isHdr` additionally accepts `p010`, any 10-bit pixel format, `gamma == pq/smpte2084` and `primaries == bt.2020`.
 

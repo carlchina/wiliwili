@@ -15,8 +15,11 @@
 #include "utils/stage.hpp"
 #include "utils/activity_helper.hpp"
 #include "utils/ps5_decoder.hpp"
-#include "utils/ps5_hdr_helper.hpp"
 #include "view/mpv_core.hpp"
+
+#if defined(PS5) && defined(BOREALIS_USE_VULKAN)
+#include <borealis/platforms/driver/vulkan.hpp>
+#endif
 
 #ifdef IOS
 #include <SDL2/SDL_main.h>
@@ -96,6 +99,12 @@ int main(int argc, char* argv[]) {
 
         // Init the app and i18n
 #ifdef PS5
+        // Ask for a ten bit PQ swapchain when the user turned physical HDR on,
+        // before the platform creates one: the display only switches to HDR10
+        // if the framebuffers are registered as BGR10A2 BT.2100 PQ.
+#if defined(BOREALIS_USE_VULKAN)
+        brls::VulkanContext::HDR_SWAPCHAIN = MPVCore::HDR_OUTPUT;
+#endif
         wiliwili_mark("app init");
 #endif
         if (!brls::Application::init()) {
@@ -174,7 +183,6 @@ int main(int argc, char* argv[]) {
         brls::Logger::info("mainLoop done");
 
 #ifdef PS5
-        PS5HDR::cleanup();
         brls::Logger::info("leaving the title");
         fflush(nullptr);
         wiliwili_mark("leaving title");
