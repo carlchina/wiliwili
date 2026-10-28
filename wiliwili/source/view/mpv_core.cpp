@@ -1046,7 +1046,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
                   isHlg ||
                   this->videoInfo.primaries == "bt.2020");
 #if defined(PS5)
-    bool wantHdrOutput = (isDoviProfile5 || isHdr) && !this->isStopped();
+    bool wantHdrOutput = MPVCore::HDR_OUTPUT && (isDoviProfile5 || isHdr) && !this->isStopped();
     if (wantHdrOutput != PS5HDR::isHdrOutputActive()) {
         // 只有真正切到 10bit PQ 扫描输出之后，着色器才能按 PQ 打包：帧缓冲本身
         // 还是 8bit，显示端没切的话按 PQ 写进去，整屏（连界面）都会花掉。

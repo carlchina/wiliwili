@@ -405,6 +405,15 @@ public:
     // 硬件解码
     inline static bool HARDWARE_DEC = false;
 
+#if defined(PS5)
+    // 物理 HDR10 输出（实验）。关掉时 HDR 视频在着色器里做 SDR 色调映射。
+    //
+    // 打开它需要把整帧按 PQ 打包进 8bit 帧缓冲，而 nanovg 的绘制是预乘 alpha
+    // 混合的：只要有一层半透明的像素（文字抗锯齿、圆角、弹幕、菜单遮罩），
+    // 混合出来的就不是 PQ 值，整屏立刻花掉。默认关闭，等 10bit swapchain 做好再开。
+    inline static bool HDR_OUTPUT = false;
+#endif
+
     // 硬解方式
 #if defined(__SWITCH__) || defined(BOREALIS_USE_GXM)
     inline static std::string PLAYER_HWDEC_METHOD = "auto";

@@ -201,6 +201,7 @@ std::unordered_map<SettingItem, ProgramOption> ProgramConfig::SETTING_MAP = {
     {SettingItem::PLAYER_HIGHLIGHT_BAR, {"player_highlight_bar", {}, {}, 0}},
     {SettingItem::PLAYER_SHOW_VIDEO_INFO, {"player_show_video_info", {}, {}, 0}},
     {SettingItem::PS5_HWDEC_TEST, {"ps5_hwdec_test", {}, {}, 0}},
+    {SettingItem::PS5_HDR_OUTPUT, {"ps5_hdr_output", {}, {}, 0}},
     {SettingItem::PLAYER_SKIP_OPENING_CREDITS, {"player_skip_opening_credits", {}, {}, 1}},
     {SettingItem::PLAYER_LOW_QUALITY, {"player_low_quality", {}, {}, 1}},
 #if defined(IOS) || defined(__PSV__) || defined(__SWITCH__) || defined(PS5)
@@ -661,6 +662,12 @@ void ProgramConfig::load() {
 
     // 初始化自定义的硬件加速方案
     MPVCore::PLAYER_HWDEC_METHOD = getSettingItem(SettingItem::PLAYER_HWDEC_CUSTOM, MPVCore::PLAYER_HWDEC_METHOD);
+
+#if defined(PS5)
+    // 物理 HDR10 输出（实验，默认关）：详见 MPVCore::HDR_OUTPUT 的说明
+    MPVCore::HDR_OUTPUT = getBoolOption(SettingItem::PS5_HDR_OUTPUT);
+    brls::Logger::info("ps5: physical HDR10 output {}", MPVCore::HDR_OUTPUT ? "enabled" : "disabled");
+#endif
 
     // 播放结束时自动退出全屏
     VideoView::EXIT_FULLSCREEN_ON_END = getBoolOption(SettingItem::PLAYER_EXIT_FULLSCREEN_ON_END);
