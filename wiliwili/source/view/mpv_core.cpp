@@ -385,8 +385,6 @@ void MPVCore::init() {
     if (!mpv) {
         brls::fatal("Error Create mpv Handle");
     }
-    // 新的 mpv 实例没有 Dolby Vision 的 format 滤镜，标记要跟着重置
-    doviFormatActive = false;
     std::string confDir = ProgramConfig::instance().getConfigDir();
     // misc
     mpvSetOptionString(mpv, "config", "yes");
@@ -552,7 +550,6 @@ void MPVCore::init() {
     check_error(mpvObserveProperty(mpv, 30, "video-params/gamma", MPV_FORMAT_STRING));
     check_error(mpvObserveProperty(mpv, 31, "video-params/primaries", MPV_FORMAT_STRING));
     check_error(mpvObserveProperty(mpv, 32, "video-params/colormatrix", MPV_FORMAT_STRING));
-    check_error(mpvObserveProperty(mpv, 33, "video-params/colorlevels", MPV_FORMAT_STRING));
 
     // init renderer params
 #ifdef MPV_SW_RENDER
@@ -1065,8 +1062,6 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     } else if (isHdr) {
         videoPaint.radius = 1.0f; // 触发 GPU 片段着色器 HDR PQ BT.2020 -> SDR BT.709 电影级色调映射
     }
-    // 着色器里的 Profile 5 还原假定输入是 full range 的原始 IPT，这里让 mpv 与之一致
-    if (!this->isStopped()) setDolbyVisionFormat(isDoviProfile5);
     nvgFillPaint(vg, videoPaint);
     nvgFill(vg);
 #elif defined(BOREALIS_USE_GXM)
@@ -1518,12 +1513,6 @@ void MPVCore::eventMainLoop() {
                             videoInfo.colormatrix = *(char **)data ? *(char **)data : "";
                         }
                         break;
-                    case 33:
-                        if (data) {
-                            std::lock_guard<std::mutex> lock(videoInfoMutex);
-                            videoInfo.colorlevels = *(char **)data ? *(char **)data : "";
-                        }
-                        break;
                     default:
                         break;
                 }
@@ -1537,7 +1526,6 @@ void MPVCore::eventMainLoop() {
 
 void MPVCore::reset() {
     brls::Logger::debug("MPVCore::reset");
-    setDolbyVisionFormat(false);
 #if defined(PS5)
     PS5HDR::endPlayback();
     {
@@ -1610,7 +1598,6 @@ void MPVCore::resume() { command_async("set", "pause", "no"); }
 void MPVCore::pause() { command_async("set", "pause", "yes"); }
 
 void MPVCore::stop() {
-    setDolbyVisionFormat(false);
 #if defined(PS5)
     PS5HDR::endPlayback();
     {
@@ -1834,26 +1821,6 @@ void MPVCore::clearShader(bool showHint) {
 
     // 显示通知
     if (showHint) brls::Application::notify("Clear profile");
-}
-
-void MPVCore::setDolbyVisionFormat(bool enable) {
-    if (enable == doviFormatActive) return;
-    doviFormatActive = enable;
-
-#if defined(BOREALIS_USE_VULKAN)
-    if (enable) {
-        // Profile 5 的 IPT 是 full range，容器却常标成 limited，swscale 会按 limited
-        // 拉伸出 14% 的色度和 (Y-16)*255/219 的明度，着色器只能事后反推，误差很大。
-        // 这里直接把输入参数改写成 full range + bt.709：两边都是 full range 时
-        // swscale 只做取值搬运，着色器再用 bt.709 的逆矩阵就能精确拿回 I/Ct/Cp。
-        brls::Logger::info(
-            "ps5: dolby vision profile 5, force full range (source levels={} matrix={} pixfmt={})",
-            videoInfo.colorlevels, videoInfo.colormatrix, videoInfo.pixelFormat);
-        command_async("vf", "append", "@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709");
-    } else {
-        command_async("vf", "remove", "@wiliwili-dv");
-    }
-#endif
 }
 
 void MPVCore::showOsdText(const std::string &value, int d) { command_async("show-text", value, d); }
