@@ -31,6 +31,9 @@ if [[ ! -d "mpv-${MPV_VERSION}" ]]; then
     tar -xzf "mpv-${MPV_VERSION}.tar.gz"
     # mpv 0.36.0 was released before FFmpeg 7, this patch makes it compile with it
     patch --strip=1 --directory="mpv-${MPV_VERSION}" < "${SCRIPT_DIR}/mpv/mpv.patch"
+    # Dolby Vision Profile 5: raw P010 passthrough + per-frame RPU constants
+    # through the software render API (scripts/ps5/mpv/mpv_dovi.patch)
+    patch --strip=1 --directory="mpv-${MPV_VERSION}" < "${SCRIPT_DIR}/mpv/mpv_dovi.patch"
 fi
 
 cd "mpv-${MPV_VERSION}"
