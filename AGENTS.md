@@ -292,9 +292,19 @@ homebrew title under `/data/homebrew/PPSA99099/` on a jailbroken console.
   - **Profile 5 (Official streaming & cinema)**:
     - Base layer is proprietary **IPT-PQ / ICtCp** (`dv_profile=5`, Full Range 0~255).
     - Flagged via `isDoviProfile5`, mapping to `videoPaint.radius = 2.0f` and `texType == 5`. Note: `dv_profile` itself is **not** read — the check is heuristic (see below) because the container metadata is not exposed by every Bilibili stream.
-    - The range compensation lives **in the shader** (`dolby_vision_profile5_to_nits()`): swscale treats the full-range IPT as limited and stretches luma by `(Y-16)*255/219` and chroma by ~14%, so the shader scales `Ct`/`Cp` back by `224/255`, damps chroma in the shadows (`smoothstep(0.02, 0.25, Y)`, 0.7→1.0) and lifts out-of-gamut negatives before clipping. This combination is what looks right on the console.
-    - A `vf=@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709` filter that declared the input as full range, so that the shader could take the untouched values, was tried and **made the picture worse** on the console: leave the filter chain alone.
-    - Reconstructed LMS' is linearized via PQ EOTF and transformed to BT.2020 using libplacebo's `dovi_lms2rgb`; out-of-gamut negatives are clipped (lifting them would turn pure black into gray).
+    - **swscale color conversion** (the critical detail): mpv has no libplacebo; it software-decodes DV P5 as `yuv420p10le` and lets swscale convert to 8-bit RGBA. swscale sees **bt2020nc limited-range** YUV and applies: (a) limited→full luma expansion `(Y − 16/255) × 255/219`, (b) limited→full chroma expansion `(C − 128/255) × 255/224`, (c) the **BT.2020-nc forward matrix**. The shader must exactly invert this chain.
+    - **Shader inverse** (`dolby_vision_profile5_to_nits()` in `fill_base.frag`):
+      1. Apply `M_rgb_to_yuv_2020nc` (BT.2020-nc matrix) to recover YCbCr from RGBA.
+      2. Re-compress luma: `I_true = yuv.x × (219/255) + (16/255)` — undoes the limited→full expansion.
+      3. Re-compress chroma: `Ct = yuv.y × (224/255)`, `Cp = yuv.z × (224/255)`.
+      4. ICtCp → LMS′ (PQ-encoded) via the standard 3×3 inverse.
+      5. LMS′ → linear LMS via PQ EOTF.
+      6. Linear LMS → BT.2020 via libplacebo `dovi_lms2rgb`.
+      7. `max(lin2020, vec3(0.0))` to clip out-of-gamut negatives (lifting would make pure black grey).
+    - **Do NOT** use `smoothstep` shadow chroma damping — that was compensating for the old wrong BT.709 matrix and has been removed.
+    - **Do NOT** apply `vf=@wiliwili-dv:format=colorlevels=full:colormatrix=bt.709` filter — it was tested on the real console and made the picture worse (commit `817b5013` added, `6ad969c4` reverted). The shader's limited→full inversion handles this correctly.
+    - After any edit to `fill_base.frag`, regenerate **both** SPIR-V `.inc` files (see glsl_to_inc.py note in Key Files).
+    - Reconstructed linear BT.2020 is tone-mapped to PQ (HDR output) or SDR via BT.2390 EETF. Out-of-gamut negatives are clipped. Known limitation: 8-bit RGBA loses bottom ~6% of `I` (< 0.1 nit, invisible) and clamps above 940/1023 (> ~4775 nits, rare in practice).
   - **Heuristic detection (do not replace with `dv_profile` alone)**: `isDoviProfile5` = `colormatrix` contains `ipt`, or `codec` contains `dv`, or `pixelFormat` contains `dovi`, or `currentQuality == 126`; `isHlg` wins over it (Profile 8.4 shares the Profile 5 codec path but is plain HLG). `isHdr` additionally accepts `p010`, any 10-bit pixel format, `gamma == pq/smpte2084` and `primaries == bt.2020`.
 
 
