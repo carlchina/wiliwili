@@ -219,6 +219,13 @@ if (PLATFORM_PS5)
     if (USE_VULKAN)
         list(APPEND APP_PLATFORM_LIB vulkan SceAgc SceAgcDriver)
     endif ()
+    # AV1 software decode via libdav1d
+    pkg_check_modules(DAV1D QUIET dav1d)
+    if (DAV1D_FOUND)
+        message(STATUS "Found libdav1d: ${DAV1D_VERSION} ${DAV1D_STATIC_LIBRARIES}")
+        list(APPEND APP_PLATFORM_INCLUDE ${DAV1D_INCLUDE_DIRS})
+        list(APPEND APP_PLATFORM_LIB ${DAV1D_STATIC_LIBRARIES})
+    endif ()
 endif ()
 
 # source cpp

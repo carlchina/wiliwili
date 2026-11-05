@@ -21,6 +21,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="${WORK_DIR:-${HOME}/.cache/wiliwili-ps5}"
 
+if ! "${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config" --exists dav1d; then
+    echo "libdav1d not found in the sysroot, building it first" >&2
+    "${SCRIPT_DIR}/build_dav1d.sh"
+fi
+
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
 

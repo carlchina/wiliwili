@@ -14,6 +14,11 @@ if [[ -z "${PS5_PAYLOAD_SDK}" ]]; then
     export PS5_PAYLOAD_SDK
 fi
 
+if ! ${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config --exists dav1d; then
+    echo "libdav1d not found in the sysroot, building it first" >&2
+    scripts/ps5/build_dav1d.sh
+fi
+
 if ! ${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config --exists mpv; then
     echo "libmpv not found in the sysroot, building it first" >&2
     scripts/ps5/build_libmpv.sh

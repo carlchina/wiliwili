@@ -82,7 +82,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 llvm-18 meson ninja-build \
-            pkg-config cmake python3 curl wget unzip zlib1g-dev
+            pkg-config cmake python3 curl wget unzip zlib1g-dev nasm
 
       # The distribution keeps the suffixed names in /usr/bin and the whole
       # toolchain, the utilities beside the compiler included, in the LLVM
@@ -103,10 +103,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PS5_DEPS_PREFIX }}
-          key: ps5-title-deps-${{ hashFiles('scripts/ps5/title/fetch_deps.sh', 'scripts/ps5/install_sdk.sh', 'scripts/ps5/build_libmpv.sh', 'scripts/ps5/mpv/*') }}-v2
+          key: ps5-title-deps-${{ hashFiles('scripts/ps5/title/fetch_deps.sh', 'scripts/ps5/install_sdk.sh', 'scripts/ps5/build_dav1d.sh', 'scripts/ps5/build_libmpv.sh', 'scripts/ps5/mpv/*') }}-v2
 
       - name: Fetch dependency
         run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"
+
+      - name: Build libdav1d
+        run: |
+          if ! "${PS5_PAYLOAD_SDK}/bin/prospero-pkg-config" --exists dav1d; then
+            scripts/ps5/build_dav1d.sh
+          fi
 
       # The SDK ships the ffmpeg it was built with but not mpv: this installs
       # the archive the title links against.

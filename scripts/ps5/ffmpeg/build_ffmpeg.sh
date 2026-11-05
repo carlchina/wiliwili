@@ -63,6 +63,12 @@ if [[ ! -x "${CC}" ]]; then
     exit 1
 fi
 
+# Ensure libdav1d is built and installed in sysroot for AV1 software decoding
+if [[ ! -f "${PS5_PAYLOAD_SDK}/target/user/homebrew/lib/libdav1d.a" ]]; then
+    echo "libdav1d not found in sysroot, building it first..." >&2
+    "${REPO_DIR}/scripts/ps5/build_dav1d.sh"
+fi
+
 mkdir -p "${WORK_DIR}/ffmpeg-build"
 cd "${WORK_DIR}/ffmpeg-build"
 
@@ -84,6 +90,9 @@ cd "${WORK_DIR}/ffmpeg-build"
     --enable-libharfbuzz \
     --enable-libass \
     --enable-libx264 \
+    --enable-libdav1d \
+    --enable-decoder=libdav1d \
+    --disable-decoder=av1 \
     --enable-lzma \
     --enable-zlib \
     --enable-iconv \
