@@ -492,8 +492,8 @@ void MPVCore::init() {
     // Fix vo_wait_frame() cannot be wakeup
     mpvSetOptionString(mpv, "video-latency-hacks", "yes");
 #endif
-    // 过低的值可能导致部分直播流无法正确播放
-    mpvSetOptionString(mpv, "demuxer-lavf-analyzeduration", "0.4");
+    // 过低的值可能导致部分直播流无法正确播放 (如大GOP、HLS切片流等需足够探测时长)
+    mpvSetOptionString(mpv, "demuxer-lavf-analyzeduration", "1.5");
     mpvSetOptionString(mpv, "demuxer-lavf-probescore", "24");
 
     // log
@@ -992,16 +992,25 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     // The picture is put on the screen in two steps: the frame is resized to
     // the place the picture takes, and then the texture is drawn.
     stage::Marker marker("video draw");
-    bool isHlg          = (this->videoInfo.gamma == "arib-std-b67" || this->videoInfo.gamma == "hlg" ||
-                           (dovi_meta.meta[0] > 0.5f && dovi_meta.meta[1] > 0.5f));
+    bool isHlg          = (this->videoInfo.gamma == "arib-std-b67" || this->videoInfo.gamma == "hlg"
+#ifdef MPV_SW_RENDER
+                           || (dovi_meta.meta[0] > 0.5f && dovi_meta.meta[1] > 0.5f)
+#endif
+    );
     bool isDoviProfile5 = !isHlg && (
+#ifdef MPV_SW_RENDER
         (dovi_meta.meta[0] > 0.5f && dovi_meta.meta[1] < 0.5f) ||
+#endif
         this->videoInfo.colormatrix.find("ipt") != std::string::npos ||
         this->videoInfo.codec.find("dv") != std::string::npos ||
         this->videoInfo.pixelFormat.find("dovi") != std::string::npos
     );
 
-    if (!(this->rect == area) || this->is_dovi_mode != isDoviProfile5) {
+    if (!(this->rect == area)
+#ifdef MPV_SW_RENDER
+        || this->is_dovi_mode != isDoviProfile5
+#endif
+    ) {
         setFrameSize(area);
     }
 
@@ -1077,11 +1086,14 @@ void MPVCore::draw(brls::Rect area, float alpha) {
     if (isHlg) {
         videoPaint.radius = 3.0f; // 触发 GPU 片段着色器 HLG BT.2100 -> PQ / SDR 电影级转换
     } else if (isDoviProfile5) {
+#ifdef MPV_SW_RENDER
         nvgSetDoviMetadata(vg, &dovi_meta);
+#endif
         videoPaint.radius = 2.0f; // 触发 GPU 片段着色器 Dolby Vision Profile 5 RPU 重塑与色调映射
     } else if (isHdr) {
         videoPaint.radius = 1.0f; // 触发 GPU 片段着色器 HDR PQ BT.2020 -> SDR BT.709 电影级色调映射
     }
+#ifdef MPV_SW_RENDER
     if (!isDoviProfile5) {
         nvgSetDoviMetadata(vg, nullptr);
     }
@@ -1096,6 +1108,7 @@ void MPVCore::draw(brls::Rect area, float alpha) {
                 this->videoInfo.gamma, this->videoInfo.colormatrix, this->videoInfo.pixelFormat);
         }
     }
+#endif
     nvgFillPaint(vg, videoPaint);
     nvgFill(vg);
 #elif defined(BOREALIS_USE_GXM)

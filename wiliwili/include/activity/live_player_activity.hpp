@@ -135,6 +135,10 @@ private:
     // 主播关注状态
     bool anchor_following = false;
 
+    // 当前直播流协议偏好 (0: FLV优先, 1: HLS优先) 与重试计数
+    int currentProtocolPreference = 0;
+    int retryCount = 0;
+
     //更新timeLabel
     MPVEvent::Subscription tl_event_id;
     //视频清晰度

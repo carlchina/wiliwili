@@ -15,6 +15,9 @@ if (APPLE AND PLATFORM_DESKTOP)
             TIMEOUT 5
             OUTPUT_VARIABLE MACOS_VERSION
             OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (MACOS_VERSION VERSION_GREATER 15.0)
+        set(MACOS_VERSION "14.0")
+    endif ()
     message(STATUS "compiling on macOS: ${MACOS_VERSION}")
     if (MAC_IntelChip_Old)
         message(STATUS "CMAKE_OSX_ARCHITECTURES: x86_64")

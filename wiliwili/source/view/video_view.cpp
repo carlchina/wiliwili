@@ -893,7 +893,7 @@ std::string VideoView::genExtraUrlParam(int start, int end, const std::vector<st
 #ifdef __PSV__
         "referrer=\"https://www.bilibili.com\",network-timeout=10";
 #else
-        "referrer=\"https://www.bilibili.com\",network-timeout=5";
+        "referrer=\"https://www.bilibili.com\",network-timeout=10";
 #endif
     auto proxy = ProgramConfig::instance().getProxy();
     if (!proxy.empty()) {

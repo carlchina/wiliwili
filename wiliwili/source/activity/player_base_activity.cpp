@@ -200,6 +200,13 @@ private:
 void BasePlayerActivity::onContentAvailable() { this->setCommonData(); }
 
 void BasePlayerActivity::setCommonData() {
+#if defined(PS5)
+    // 确保点播视频播放时恢复用户的硬件解码设置
+    if (MPVCore::HARDWARE_DEC) {
+        MPVCore::instance().command_async("set", "vd", MPVCore::PLAYER_HWDEC_METHOD);
+    }
+#endif
+
     // 视频评论
     recyclingGrid->registerCell("Cell", []() { return VideoComment::create(); });
 

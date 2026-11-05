@@ -11,35 +11,115 @@
 #include "bilibili.h"
 #include "api/bilibili/util/http.hpp"
 
-void LiveDataRequest::requestData(int roomid) {
+bool LiveDataRequest::selectStream(const bilibili::LiveRoomPlayInfo& playInfo, int protocolPreference) {
+    const auto& playurl = playInfo.playurl_info.playurl;
+    if (playurl.stream.empty()) return false;
+
+    // 协议选择偏好：
+    // protocolPreference == 1: 优先 HLS (http_hls)，次选 FLV (http_stream)
+    // 否则: 优先 FLV (http_stream)，次选 HLS (http_hls)
+    std::vector<std::string> protocolOrder;
+    if (protocolPreference == 1) {
+        protocolOrder = {"http_hls", "http_stream"};
+    } else {
+        protocolOrder = {"http_stream", "http_hls"};
+    }
+
+    // 编码偏好：
+    // 默认优先 avc (兼容性最好，不黑屏)，其次 hevc，最后 av1
+    // 若用户显式配置了 VIDEO_CODEC (7: AVC, 12: HEVC, 13: AV1)，遵从用户偏好
+    std::vector<std::string> codecOrder = {"avc", "hevc", "av1"};
+    if (bilibili::BilibiliClient::VIDEO_CODEC == 12) {
+        codecOrder = {"hevc", "avc", "av1"};
+    } else if (bilibili::BilibiliClient::VIDEO_CODEC == 13) {
+        codecOrder = {"av1", "avc", "hevc"};
+    }
+
+    auto findCodec = [&](const bilibili::LiveStreamFormat& fmt) -> std::optional<bilibili::LiveStreamFormatCodec> {
+        for (const auto& targetCodec : codecOrder) {
+            for (const auto& c : fmt.codec) {
+                if (c.codec_name == targetCodec && !c.url_info.empty()) {
+                    return c;
+                }
+            }
+        }
+        for (const auto& c : fmt.codec) {
+            if (!c.url_info.empty()) return c;
+        }
+        return std::nullopt;
+    };
+
+    // 1. 按协议顺序和格式顺序遍历
+    for (const auto& protoName : protocolOrder) {
+        for (const auto& s : playurl.stream) {
+            if (s.protocol_name != protoName) continue;
+
+            // 格式偏好：HLS 优先 fmp4，次选 ts；FLV 优先 flv
+            std::vector<std::string> formatOrder;
+            if (protoName == "http_hls") {
+                formatOrder = {"fmp4", "ts"};
+            } else {
+                formatOrder = {"flv"};
+            }
+
+            for (const auto& fmtName : formatOrder) {
+                for (const auto& f : s.format) {
+                    if (f.format_name != fmtName) continue;
+                    auto c = findCodec(f);
+                    if (c.has_value()) {
+                        liveUrl = *c;
+                        brls::Logger::info("Selected live stream: protocol={} format={} codec={} qn={}",
+                                           protoName, fmtName, c->codec_name, c->current_qn);
+                        return true;
+                    }
+                }
+            }
+
+            // 若指定 format 未命中，遍历该 protocol 下的任意 format
+            for (const auto& f : s.format) {
+                auto c = findCodec(f);
+                if (c.has_value()) {
+                    liveUrl = *c;
+                    brls::Logger::info("Selected live stream (fallback format): protocol={} format={} codec={} qn={}",
+                                       protoName, f.format_name, c->codec_name, c->current_qn);
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 2. 全局兜底：任意可用 stream 的任意 format 和 codec
+    for (const auto& s : playurl.stream) {
+        for (const auto& f : s.format) {
+            for (const auto& c : f.codec) {
+                if (!c.url_info.empty()) {
+                    liveUrl = c;
+                    brls::Logger::warning("Selected live stream (loose fallback): protocol={} format={} codec={} qn={}",
+                                          s.protocol_name, f.format_name, c.codec_name, c.current_qn);
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+void LiveDataRequest::requestData(int roomid, int protocolPreference) {
     ASYNC_RETAIN
     BILI::get_live_room_play_info(
         roomid, defaultQuality,
-        [ASYNC_TOKEN](const auto& result) {
+        [ASYNC_TOKEN, protocolPreference](const auto& result) {
             liveRoomPlayInfo = result;
             qualityDescriptionMap.clear();
             for (auto& i : liveRoomPlayInfo.playurl_info.playurl.g_qn_desc) {
                 qualityDescriptionMap[i.qn] = i.desc;
             }
 
-            // 选择第一个 protocol 的 第一个 format 的第一个 codec 作为播放源
-            // protocol: http_stream / http_hls
-            // format: flv / ts / fmp4
-            // codec: avc / hevc / av1
-            bilibili::LiveStream stream;
-            for (auto& i : liveRoomPlayInfo.playurl_info.playurl.stream) {
-                stream = i;
-                break;
+            if (!selectStream(liveRoomPlayInfo, protocolPreference)) {
+                brls::Logger::error("No usable live stream found for room");
             }
-            bilibili::LiveStreamFormat format;
-            for (auto& i : stream.format) {
-                format = i;
-                break;
-            }
-            for (auto& i : format.codec) {
-                liveUrl = i;
-                break;
-            }
+
             brls::sync([ASYNC_TOKEN]() {
                 ASYNC_RELEASE
                 onLiveData(liveRoomPlayInfo);

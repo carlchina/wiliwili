@@ -23,7 +23,9 @@ public:
 
     virtual void onAnchorTitleInfo(const std::string& title) {}
 
-    void requestData(int roomid);
+    void requestData(int roomid, int protocolPreference = 0);
+
+    bool selectStream(const bilibili::LiveRoomPlayInfo& playInfo, int protocolPreference = 0);
 
     void reportHistory(int roomid);
 

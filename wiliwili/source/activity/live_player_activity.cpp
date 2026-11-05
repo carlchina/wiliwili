@@ -84,6 +84,13 @@ void LiveActivity::setCommonData() {
     // 重置播放器
     MPVCore::instance().reset();
 
+#if defined(PS5)
+    // 直播流（OBS/手机推流等非标码流）极易被 PS5 sceVideodec2 硬件解码器拒绝(0x811d0303)
+    // PS5 Zen2 CPU 软解直播流仅占极低负载且拥有 100% 格式兼容性，强制启用软解以彻底避免黑屏
+    MPVCore::instance().command_async("set", "vd", "!h264_ps5,!hevc_ps5,auto");
+    brls::Logger::info("LiveActivity: [PS5] 启用 CPU 软解以保证直播流兼容性");
+#endif
+
     // 清空自定义着色器
     ShaderHelper::instance().clearShader(false);
 
@@ -101,26 +108,43 @@ void LiveActivity::setCommonData() {
             size_t now =
                 std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - _zero).count();
             this->video->setStatusLabelLeft(wiliwili::sec2Time(now - liveRoomPlayInfo.live_time));
+        } else if (e == MPV_LOADED || e == MPV_RESUME) {
+            // 成功起播，重置重试计数
+            this->retryCount = 0;
         } else if (e == MPV_FILE_ERROR) {
             this->video->showOSD(false);
             this->video->setStatusLabelLeft("播放错误");
 
+            // 发生错误时，尝试切换协议重试 (FLV <-> HLS)
+            this->retryCount++;
+            if (this->retryCount <= 2) {
+                this->currentProtocolPreference = (this->currentProtocolPreference == 0) ? 1 : 0;
+                brls::Logger::warning("LiveActivity: 播放错误，尝试切换协议重试 (protocol preference: {}, retry: {})",
+                                     this->currentProtocolPreference, this->retryCount);
+            }
+
             switch (MPVCore::instance().mpv_error_code) {
                 case MPV_ERROR_UNKNOWN_FORMAT:
                     this->video->setOnlineCount("暂不支持当前视频格式");
+                    this->retryRequestData();
                     break;
                 case MPV_ERROR_LOADING_FAILED:
-                    this->video->setOnlineCount("加载失败");
-                    // 加载失败时，获取直播间信息，查看是否直播间已经关闭
-                    // 如果直播间信息获取失败，则认定为断网，每隔N秒重试一次
+                    this->video->setOnlineCount("加载失败，正在重试...");
                     this->retryRequestData();
                     break;
                 default:
                     this->video->setOnlineCount({mpvErrorString(MPVCore::instance().mpv_error_code)});
+                    this->retryRequestData();
             }
         } else if (e == END_OF_FILE) {
             // flv 直播遇到网络错误不会报错，而是输出 END_OF_FILE
             // 直播间关闭时也可能进入这里
+            this->retryCount++;
+            if (this->retryCount <= 2) {
+                this->currentProtocolPreference = (this->currentProtocolPreference == 0) ? 1 : 0;
+                brls::Logger::warning("LiveActivity: 直播流断开，尝试切换协议重试 (protocol preference: {}, retry: {})",
+                                     this->currentProtocolPreference, this->retryCount);
+            }
             this->retryRequestData();
         }
     });
@@ -136,7 +160,7 @@ void LiveActivity::setVideoQuality() {
             "wiliwili/player/quality"_i18n, this->getQualityDescriptionList(),
             [this](int selected) {
                 defaultQuality = liveUrl.accept_qn[selected];
-                this->requestData(this->liveData.roomid);
+                this->requestData(this->liveData.roomid, this->currentProtocolPreference);
             },
             this->getCurrentQualityIndex());
 
@@ -260,7 +284,7 @@ void LiveActivity::onContentAvailable()
                          });
 
     // 根据房间号重新获取高清播放链接
-    this->requestData(liveData.roomid);
+    this->requestData(liveData.roomid, this->currentProtocolPreference);
 
     // 连接直播弹幕 - 确保g_liveActivity在此之前已初始化
     this->requestLiveDanmakuToken(this->liveData.roomid);
@@ -370,15 +394,20 @@ void LiveActivity::onLiveData(const bilibili::LiveRoomPlayInfo &result)
             });
     }
 
-    // todo: 允许使用备用链接
+    bool isPrimary = true;
     for (const auto& i : liveUrl.url_info) {
         auto url = i.host + liveUrl.base_url + i.extra;
-
-        // 设置视频链接
-        brls::Logger::debug("Live stream url: {}", url);
-        this->video->setUrl(url);
-        return;
+        if (isPrimary) {
+            brls::Logger::info("Live stream primary url: {}", url);
+            this->video->setUrl(url);
+            isPrimary = false;
+        } else {
+            brls::Logger::info("Live stream backup url: {}", url);
+            this->video->setBackupUrl(url);
+        }
     }
+
+    if (!isPrimary) return;
 
     this->video->showOSD(false);
     showDialog("当前地区无法获取直播链接", "pictures/sorry.png", true);
@@ -542,9 +571,11 @@ void LiveActivity::retryRequestData() {
     // 每隔一段时间自动重试
     brls::cancelDelay(errorDelayIter);
     ASYNC_RETAIN
-    errorDelayIter = brls::delay(2000, [ASYNC_TOKEN]() {
+    errorDelayIter = brls::delay(1500, [ASYNC_TOKEN]() {
         ASYNC_RELEASE
-        if (!MPVCore::instance().isPlaying()) this->requestData(liveData.roomid);
+        if (!MPVCore::instance().isPlaying()) {
+            this->requestData(liveData.roomid, this->currentProtocolPreference);
+        }
     });
 }
 
@@ -846,6 +877,14 @@ LiveActivity::~LiveActivity() {
     
     // 恢复底部固定进度条的设置
     VideoView::BOTTOM_BAR = ProgramConfig::instance().getBoolOption(SettingItem::PLAYER_BOTTOM_BAR);
+
+#if defined(PS5)
+    // 退出直播后恢复点播视频的硬件解码设置
+    if (MPVCore::HARDWARE_DEC) {
+        MPVCore::instance().command_async("set", "vd", MPVCore::PLAYER_HWDEC_METHOD);
+        brls::Logger::info("LiveActivity: [PS5] 退出直播，恢复视频硬件解码: {}", MPVCore::PLAYER_HWDEC_METHOD);
+    }
+#endif
     
     threadState->isActive.store(false, std::memory_order_release);
     

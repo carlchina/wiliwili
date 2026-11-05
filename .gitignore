@@ -46,3 +46,4 @@ ps5_wiliwili_*
 *.log
 
 ps5_latest.crash.txt
+.cache/
