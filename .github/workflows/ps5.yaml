@@ -181,7 +181,7 @@ jobs:
       # Package native title into compressed PFS (.ffpfsc) image using ps5-dump-forge
       - name: Package ffpfsc
         run: |
-          scripts/ps5/package_ffpfs.sh -i dist/PPSA99099 -o package -n "${{ needs.version.outputs.DIST_PS5 }}" -l 9
+          scripts/ps5/package_ffpfs.sh -i dist/PPSA99099 -o package -n PPSA99099 -l 9
 
       - name: Upload title folder
         uses: actions/upload-artifact@v6
@@ -192,8 +192,8 @@ jobs:
       - name: Upload ffpfsc image
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.version.outputs.DIST_PS5 }}-ffpfsc
-          path: package/${{ needs.version.outputs.DIST_PS5 }}.ffpfsc
+          name: PPSA99099-ffpfsc
+          path: package/PPSA99099.ffpfsc
 
       - name: Upload zip package
         uses: actions/upload-artifact@v6
@@ -209,7 +209,6 @@ jobs:
           tag_name: ${{ needs.version.outputs.version }}
           files: |
             package/${{ needs.version.outputs.DIST_PS5 }}.zip
-            package/${{ needs.version.outputs.DIST_PS5 }}.ffpfsc
             package/PPSA99099.ffpfsc
           fail_on_unmatched_files: false
           generate_release_notes: true
