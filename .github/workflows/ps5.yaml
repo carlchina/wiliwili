@@ -73,6 +73,7 @@ jobs:
       PS5_NATIVE_TOOL: ${{ github.workspace }}/ps5-deps/ps5-native-app-boilerplate/build-host/ps5-native-tool
       PS5_RADV_ARCHIVE: ${{ github.workspace }}/ps5-deps/radv-release/lib/libvulkan_radeon.ps5.a
       PS5_RADV_INCLUDE: ${{ github.workspace }}/ps5-deps/radv-release/include
+      PS5_PLATFORM_ARCHIVE: ${{ github.workspace }}/ps5-deps/radv-release/lib/libps5platform.a
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -105,7 +106,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PS5_DEPS_PREFIX }}
-          key: ps5-title-deps-${{ hashFiles('scripts/ps5/title/fetch_deps.sh', 'scripts/ps5/install_sdk.sh', 'scripts/ps5/build_dav1d.sh', 'scripts/ps5/build_libmpv.sh', 'scripts/ps5/mpv/*') }}-v3
+          key: ps5-title-deps-${{ hashFiles('scripts/ps5/title/fetch_deps.sh', 'scripts/ps5/install_sdk.sh', 'scripts/ps5/build_dav1d.sh', 'scripts/ps5/build_libmpv.sh', 'scripts/ps5/mpv/*') }}-v4
 
       - name: Fetch dependency
         run: scripts/ps5/title/fetch_deps.sh "${PS5_DEPS_PREFIX}"

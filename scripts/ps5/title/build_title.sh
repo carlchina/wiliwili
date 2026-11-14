@@ -307,7 +307,10 @@ radv_archive=${PS5_RADV_ARCHIVE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/nati
 radv_include=${PS5_RADV_INCLUDE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/include}
 platform_archive=${PS5_PLATFORM_ARCHIVE:-}
 if [[ -z "$platform_archive" ]]; then
-    for cand in "$PS5_PAYLOAD_SDK/target/lib/libps5platform.a" \
+    for cand in "${PS5_DEPS_PREFIX:-}/radv-release/lib/libps5platform.a" \
+                "$HOME/.cache/wiliwili-ps5/ps5-deps/radv-release/lib/libps5platform.a" \
+                "$PS5_PAYLOAD_SDK/target/lib/libps5platform.a" \
+                "$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/lib/libps5platform.a" \
                 "$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/ps5-payload-sdk/target/lib/libps5platform.a" \
                 "$HOME/.cache/wiliwili-ps5/PS5_PayloadSDK/platform/build/ps5/libps5platform.a"; do
         if [[ -f "$cand" ]]; then
@@ -319,8 +322,13 @@ fi
 
 vulkan_enabled=0
 if [[ -f "$radv_archive" ]]; then
+    if [[ -z "$platform_archive" ]]; then
+        echo "==> [title] ERROR: Static RADV Vulkan requires libps5platform.a, but none was found!" >&2
+        exit 1
+    fi
     vulkan_enabled=1
     echo "==> [title] Static RADV Vulkan pipeline enabled: $radv_archive"
+    echo "==> [title] PS5 platform archive: $platform_archive"
     compile c11 "$title_dir/ps5_vulkan_trampoline.c" "$work_dir/obj/ps5_vulkan_trampoline.o" -I "$radv_include"
     if [[ ! -s "$work_dir/radv_stubs.ld" ]]; then
         echo "==> [title] Generating weak symbol stubs for optional Vulkan entrypoints"

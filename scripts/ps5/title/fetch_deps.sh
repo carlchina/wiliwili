@@ -143,20 +143,24 @@ chmod +x "${prefix}/ps5-native-app-boilerplate/tooling/prospero-clang18"
 # The commit is in the console's fork of SDL, not in the upstream repository.
 fetch_repo https://github.com/carlchina/SDL.git "${sdl_commit}" "${prefix}/SDL2"
 
-# Mesa RADV Vulkan prebuilt driver archive and headers for native title
-radv_sdk_sha256="1c53af905ae727c0be44f283a31c337b0afab336ff54aa6fb23e37f962393e03"
+# Mesa RADV Vulkan prebuilt driver archive, platform shims and headers for native title
+radv_sdk_sha256="d1fd6a3de08a045db64a973aca93b199f9d91c5edf4ee0eb14764b3866d25575"
 radv_archive="${prefix}/radv-release.tar.gz"
 radv_root="${prefix}/radv-release"
 fetch_file \
     "https://github.com/carlchina/ps5-opengl/releases/download/sdk-v${opengl_version#v}/radv-release.tar.gz" \
     "${radv_sdk_sha256}" "${radv_archive}"
-if [[ ! -f ${radv_root}/lib/libvulkan_radeon.ps5.a ]]; then
+if [[ ! -f ${radv_root}/lib/libvulkan_radeon.ps5.a || ! -f ${radv_root}/lib/libps5platform.a ]]; then
     echo "==> [deps] Extracting $(basename "${radv_archive}")"
     rm -rf "${radv_root}"
     tar --extract --gzip --directory="${prefix}" --file="${radv_archive}"
 fi
 [[ -f ${radv_root}/lib/libvulkan_radeon.ps5.a ]] || {
     echo "${radv_root}/lib/libvulkan_radeon.ps5.a is missing from archive" >&2
+    exit 1
+}
+[[ -f ${radv_root}/lib/libps5platform.a ]] || {
+    echo "${radv_root}/lib/libps5platform.a is missing from archive" >&2
     exit 1
 }
 
@@ -170,6 +174,7 @@ cat >&2 <<EOF
     PS5_SDL_SOURCE=${prefix}/SDL2
     PS5_RADV_ARCHIVE=${radv_root}/lib/libvulkan_radeon.ps5.a
     PS5_RADV_INCLUDE=${radv_root}/include
+    PS5_PLATFORM_ARCHIVE=${radv_root}/lib/libps5platform.a
 
 Next: scripts/ps5/title/build_native_tool.sh and scripts/ps5/title/build_sdl2.sh
 EOF
