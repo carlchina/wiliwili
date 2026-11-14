@@ -291,6 +291,18 @@ done
 # stays a plain (unused) import instead, as before libc was linked.
 "$PS5_PAYLOAD_SDK/bin/prospero-ar" d "$app_libc" dlfcn.o 2>/dev/null || true
 
+if [[ -z "${PS5_RADV_ARCHIVE:-}" ]]; then
+    for cand in "${PS5_DEPS_PREFIX:-}/radv-release/lib/libvulkan_radeon.ps5.a" \
+                "$HOME/.cache/wiliwili-ps5/ps5-deps/radv-release/lib/libvulkan_radeon.ps5.a" \
+                "$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/lib/libvulkan_radeon.ps5.a"; do
+        if [[ -f "$cand" ]]; then
+            PS5_RADV_ARCHIVE="$cand"
+            PS5_RADV_INCLUDE="$(dirname "$(dirname "$cand")")/include"
+            break
+        fi
+    done
+fi
+
 radv_archive=${PS5_RADV_ARCHIVE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/lib/libvulkan_radeon.ps5.a}
 radv_include=${PS5_RADV_INCLUDE:-$HOME/.cache/wiliwili-ps5/PS5_Vulkan/.deps/native/radv-release/include}
 platform_archive=${PS5_PLATFORM_ARCHIVE:-}
@@ -474,9 +486,10 @@ link_image() {
         done
     fi
 
-    local dynamic_vulkan=()
-    if (( ! vulkan_enabled )) && [[ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so" ]]; then
-        dynamic_vulkan=("$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so")
+    if (( ! vulkan_enabled )); then
+        echo "==> [title] ERROR: Static Mesa RADV archive not found ($radv_archive)!" >&2
+        echo "==> [title] Native PS5 titles require static RADV Vulkan; dynamic libvulkan.so is not available on PS5 consoles." >&2
+        exit 1
     fi
 
     "$PS5_PAYLOAD_SDK/bin/prospero-lld" -T "$title_dir/ps5-pie.ld" "${radv_script[@]}" --eh-frame-hdr \
@@ -500,7 +513,6 @@ link_image() {
         --as-needed "$agc_prefix/libSceAgc.so" \
         "$agc_prefix/libSceAgcDriver.so" \
         "$work_dir/stubs/libSceVideodec2.so" \
-        "${dynamic_vulkan[@]}" \
         "$PS5_PAYLOAD_SDK"/target/lib/*.so
 }
 
@@ -520,16 +532,11 @@ compile c++20 "$work_dir/obj/ime_slots.cpp" "$work_dir/obj/ime_slots.o"
 link_image
 
 echo "==> [title] Converting and signing"
-vulkan_stub=()
-if (( ! vulkan_enabled )) && [[ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so" ]]; then
-    vulkan_stub=(--stub "$PS5_PAYLOAD_SDK/target/user/homebrew/lib/libvulkan.so")
-fi
 "$PS5_NATIVE_TOOL" link --in "$work_dir/llvm-pie.elf" --out "$work_dir/eboot.elf" \
     --stub-dir "$PS5_PAYLOAD_SDK/target/lib" \
     --stub "$agc_prefix/libSceAgc.so" \
     --stub "$agc_prefix/libSceAgcDriver.so" \
     --stub "$work_dir/stubs/libSceVideodec2.so" \
-    "${vulkan_stub[@]}" \
     --module-sdk "$module_sdk" \
     --companion-sdk "$companion_sdk" --file-name eboot.elf
 
